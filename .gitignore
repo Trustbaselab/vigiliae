@@ -1,0 +1,29 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime data
+data/
+*.db
+*.db-journal
+*.sqlite
+logs/
+deferred.json
+
+# local agent definitions (copy the template)
+agents.yaml
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

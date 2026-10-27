@@ -1,0 +1,32 @@
+# A minimal one-agent team.
+# Copy this file to agents.yaml and run: python -m vigiliae.agents sync
+#
+# The agent becomes a task with id `agent_<name>` and the schedule below.
+# `heavy: true` means it will be deferred to the off-peak window if it fires
+# during a peak-price window.
+
+team:
+  name: "One-agent team"
+  orchestrator: "greeter"
+
+agents:
+  - name: "greeter"
+    role: "Morning greeting"
+    description: "Reads the task history and writes a one-paragraph morning note."
+    schedule: "cron:0 8 * * *"
+    timeout: 600
+    heavy: false
+    boundaries:
+      allow:
+        - "read task history"
+        - "write a message to the chat"
+      deny:
+        - "modify tasks"
+        - "send external email"
+    prompt: |
+      You are the morning greeter.
+
+      Read the latest task runs and write one short paragraph:
+      what happened, what failed, and what the operator should check first.
+
+      If there is nothing to report, say exactly: "Nothing ran since yesterday."
