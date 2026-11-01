@@ -349,7 +349,20 @@ curl -X POST http://localhost:8110/api/tasks/agent_greeter/run
 
 ---
 
-## 贡献与许可
+## 贡献
 
 欢迎小而专注的 PR，见 [CONTRIBUTING.md](CONTRIBUTING.md) 和
-[SECURITY.md](SECURITY.md)。MIT License，见 [LICENSE](LICENSE)。
+[SECURITY.md](SECURITY.md)。
+
+适合新手的入手点：写一个新的执行器、给规则引擎加一种语言、补测试。
+
+## 许可
+
+MIT License，见 [LICENSE](LICENSE)。
+
+## 致谢
+
+- [DSH](https://github.com/deepseek-ai) —— 整个项目围绕它构建的思考内核。
+- [Flask](https://flask.palletsprojects.com/) 和 SQLite —— 刻意选择的「无聊」技术底座。
+- 在这个项目之前的那些开源 Agent 项目；见
+  [`docs/COMPARISON.md`](docs/COMPARISON.md)。
