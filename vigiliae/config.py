@@ -9,6 +9,39 @@ from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+
+def _load_dotenv(path):
+    """Minimal .env loader — no dependency on python-dotenv.
+
+    Reads KEY=VALUE lines, ignores blanks and # comments, strips surrounding
+    quotes. Existing environment variables win, so `export KEY=x` still works.
+    """
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip()
+                # strip matching quotes
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                    val = val[1:-1]
+                # real env wins
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except OSError:
+        pass
+
+
+# Load .env from the repository root (next to README/LICENSE), then from the
+# current working directory. Root wins so `cd sub && vigiliae` still works.
+_load_dotenv(os.path.join(ROOT, ".env"))
+_load_dotenv(os.path.join(os.getcwd(), ".env"))
+
 DATA_DIR = os.environ.get("VIGILIAE_DATA_DIR") or os.path.join(ROOT, "data")
 LOG_DIR = os.path.join(DATA_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
