@@ -12,6 +12,17 @@
 
 ---
 
+## Demo
+
+![Vigiliae demo](docs/screenshot-hero.png)
+
+*Click play, and it really runs — a real POST /api/tasks/agent_taeda/run,
+a real run id, a real 75 ms. Not a screen recording of a mock.*
+
+[▶ Watch the 25-second demo](docs/vigiliae-demo-25s.mp4) · [12 named agents](docs/screenshot-agents.png)
+
+---
+
 ## In 30 seconds
 
 ```
