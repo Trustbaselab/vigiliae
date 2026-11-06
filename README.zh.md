@@ -7,6 +7,7 @@
 ---
 **一个跑在你自己服务器上的 AI 团队 —— 12 个守夜人，你关机它继续工作，数据永远不出你的机器。**
 
+[![tests](https://github.com/Trustbaselab/vigiliae/actions/workflows/tests.yml/badge.svg)](https://github.com/Trustbaselab/vigiliae/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Status: early stage](https://img.shields.io/badge/status-early%20stage-orange.svg)](#honest-limitations)

@@ -4,6 +4,7 @@
 
 **Twelve named agents. Your data never leaves your machine. Turn off your laptop — they keep working.**
 
+[![tests](https://github.com/Trustbaselab/vigiliae/actions/workflows/tests.yml/badge.svg)](https://github.com/Trustbaselab/vigiliae/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Status: early stage](https://img.shields.io/badge/status-early%20stage-orange.svg)](#honest-limitations)
