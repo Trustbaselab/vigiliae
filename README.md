@@ -2,26 +2,30 @@
 
 **A self-hosted AI agent team that runs 24/7 on your own VPS, hands off with your local agent, and schedules heavy work to off-peak API pricing.**
 
-**一个跑在你自己服务器上的 AI 团队 —— 12 个守夜人，你关机它继续工作，数据永远不出你的机器。**
+**Twelve named agents. Your data never leaves your machine. Turn off your laptop — they keep working.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Status: early stage](https://img.shields.io/badge/status-early%20stage-orange.svg)](#honest-limitations)
 
+[中文说明 / Chinese README](README.zh.md)
+
 ---
 
-## 30 秒看懂
+## In 30 seconds
 
 ```
-你付：一台云服务器（约 200-500 元/月）
-你得到：
-  · 12 个各有名字的 AI 员工，24 小时值班
-  · 你关机，服务器继续干活
-  · 数据 100% 在你自己的服务器
-  · 技能可组合、可扩展
-  · 大模型可选（DeepSeek / Qwen / 本地部署）
+You pay:  one VPS (~$30-70/month)
+You get:
+  · 12 named AI agents on duty, 24/7
+  · Turn off your laptop — the server keeps working
+  · 100% of your data stays on your own machine
+  · Composable, extensible skills
+  · Bring your own model (DeepSeek / Qwen / local)
 
-⭐ Grok Bot（xAI）和 Meta Muse 国内用不了 —— 这是你自己搭的那一个
+⭐ Grok is banned in China, Indonesia and Malaysia; Meta Muse is US-only
+   (and still not in Korea). And even where they work, enterprises cannot
+   use them — the data leaves the country. Vigiliae runs on your own server.
 ```
 
 ---
@@ -29,153 +33,123 @@
 ## Quick start
 
 ```bash
-# 1. 装
+# 1. Install
 pip install vigiliae
 
-# 2. 初始化（生成 12 个 Agent 的默认配置）
+# 2. Initialize (generates the 12-agent config)
 vigiliae init
 
-# 3. 起（默认 8110 端口）
+# 3. Run (default port 8110)
 vigiliae serve
 
-# 4. 打开
+# 4. Open
 open http://localhost:8110
 ```
 
-**或者用 Docker：**
+**Or with Docker:**
 
 ```bash
 git clone https://github.com/Trustbaselab/vigiliae
 cd vigiliae
-cp .env.example .env        # 至少填 BOT_TOKEN
+cp .env.example .env        # at minimum, set BOT_TOKEN
 docker compose up -d
 ```
 
-**接上思考内核（可选，但推荐）：**
+**Attach a thinking kernel (optional, recommended):**
 
 ```bash
-# 更柝用 DSH（DeepSeek Harness）作为「大脑」
-# 加上这个，4 个 LLM 型 Agent 才能跑
+# Vigiliae uses DSH (DeepSeek Harness) as its "brain".
+# Without this, the 4 LLM-backed agents stay idle.
 export DEEPSEEK_API_KEY=sk-xxxxxxxx
 ```
 
-**⭐ 装完就能用。12 个 Agent 会自己开始跑（HTTP/Python 型的先跑起来，LLM 型的等你配 key）。**
+**⭐ That's it. The 12 agents start on their own. HTTP/Python agents run immediately; LLM agents wait for the key.**
 
 ---
 
-## Authentication (important)
+## What it actually does
 
-If `BOT_TOKEN` is set, every page/API except `/api/health` and `/api/heartbeat` is protected.
-The first browser visit must carry the token as `?k=`; the server returns a `302` and sets the
-`cb_auth` cookie. After that, visit `/` normally.
+**One line: you have 12 AI employees with distinct roles, each owning one slice of the work.**
 
-```bash
-# 1) token from .env
-TOKEN=$(grep '^BOT_TOKEN=' .env | cut -d= -f2-)
-
-# 2) browser: open this once, then use the normal URL
-echo "http://<SERVER-IP>:8110/login?k=$TOKEN"
-
-# 3) curl: follow the 302 and save the cookie
-curl -c /tmp/vig.cookie -L "http://127.0.0.1:8110/login?k=$TOKEN"
-curl -b /tmp/vig.cookie "http://127.0.0.1:8110/api/tasks"
-
-# 4) or one-shot with ?k= (API returns 200 directly; -L is future-proof)
-curl -L "http://127.0.0.1:8110/api/tasks?k=$TOKEN"
-```
-
-- Browser: `http://<SERVER-IP>:8110/login?k=<TOKEN>` first, then `http://<SERVER-IP>:8110/`.
-- `?k=` on an **API** request returns the data and `Set-Cookie` in one 200 response
-  (no redirect); `-L` is harmless and keeps the command future-proof.
-- `?k=` only seeds the cookie; API calls after that can use `-b`.
-- If `BOT_TOKEN` is empty, the app runs in open dev mode (do **not** expose it publicly).
-- The token is in the URL during first login, so use HTTPS in production and avoid sharing logs.
-
----
-
-## 它到底能干什么
-
-**一句话：你有 12 个各有专长的 AI 员工，各管一摊。**
-
-| 守夜人 | 职责 | 你能用它做什么 |
+| Watch | Role | What you use it for |
 |---|---|---|
-| **更柝 Vigiliae** | 总调度 | 决定谁在值班、下一步干什么 |
-| **长庚 Hesperus** | 双态交接 | 本机离线时云端自动接管 |
-| **代明 Sol et Luna** | 班次与价格钟 | 重活只在便宜时段跑 |
-| **夜分 Nox media** | 成本窗口 | 守住 API 花销 |
-| **春秋 Annales** | 编年 | 每次运行都归档，可追溯 |
-| **权衡 Libra** | 核验 | 验证数据来源，防幻觉 |
-| **行人 Nuntius** | 传令 | 把结果传出去（消息/简报） |
-| **阊阖 Porta** | 门禁 | 审批，没批准的写操作一律拦截 |
-| **庭燎 Taeda** | 灯火 | 生成报告与可视化 |
-| **织女 Arachne** | 织图 | 把散落的数据织成关系图 |
-| **后稷 Sator** | 采集 | 按缺口采数据 |
-| **疆埸 Terminus** | 锚定 | 哈希、存证、不可篡改 |
+| **Vigiliae** | Orchestrator | Decides who is on duty and what runs next |
+| **Hesperus** | Dual-state presence | Cloud takes over when your laptop goes offline |
+| **Sol et Luna** | Shift & price clock | Heavy work runs only in off-peak windows |
+| **Nox media** | Cost window guard | Keeps API spend under control |
+| **Annales** | Chronicler | Every run archived and traceable |
+| **Libra** | Verifier | Checks sources and confidence; anti-hallucination |
+| **Nuntius** | Messenger | Pushes results out (messages, briefs) |
+| **Porta** | Gatekeeper | Approval gates; unapproved writes are blocked |
+| **Taeda** | Lamp | Turns system state into readable reports |
+| **Arachne** | Weaver | Links entities and sources into a reviewable graph |
+| **Sator** | Seeder | Collects data against identified gaps |
+| **Terminus** | Anchor | Hashes and anchors artifacts; never deletes |
 
-**⭐ 每个名字都有中西古典出处 —— 详见 [NAMING.md](NAMING.md)。**
+**⭐ Every name has a real classical source — Roman *vigiliae* and the Chinese *geng* watch system. See [NAMING.md](NAMING.md).**
 
 ---
 
-## 五个技能（内置，不依赖任何插件）
+## Five built-in skills (no plugins required)
 
 ```bash
-python -m vigiliae.memory  --help    # 记忆：跨会话记住事情
-python -m vigiliae.verify  --help    # 核验：验证数据来源
-python -m vigiliae.patrol  --help    # 巡检：检查系统健康
-python -m vigiliae.collect --help    # 采集：按缺口找数据
-python -m vigiliae.report  --help    # 汇报：统一输出格式
+python -m vigiliae.memory  --help    # Memory: remember things across sessions
+python -m vigiliae.verify  --help    # Verify: check a data record's source
+python -m vigiliae.patrol  --help    # Patrol: check system health
+python -m vigiliae.collect --help    # Collect: find data against gaps
+python -m vigiliae.report  --help    # Report: one output format
 ```
 
-**每个技能都能单独用，也能被任何 Agent 调用。**
+**Each skill runs standalone and can be called by any agent.**
 
-**⭐ 技能是学了业界最好的机制后自己实现的 —— 见 [SKILLS.md](SKILLS.md)。**
+**⭐ Every skill has a `--check <input.json>` that returns structured evidence, not just pass/fail. See [SKILLS.md](SKILLS.md).**
 
 ---
 
-## 为什么是它，而不是别的
+## Why this, not something else
 
-### ① 本地 ↔ 云端交接
+### 1. Local ↔ cloud handoff
 
-本机在线时本机干活；本机离线，云端自动接管。**心跳检测 + 接管协议**，不丢任务、不重跑已完成的部分。
+When your laptop is online it does the work; when it goes offline, the cloud takes over. **Heartbeat detection + takeover protocol** — no lost tasks, no re-running what already finished.
 
 ```
-[你的笔记本]  ──心跳──▶  [你的 VPS]
-     │                      │
-  关机/断网                  │
-     ✗                      ▼
-                       自动接管，继续干
+[your laptop]  ──heartbeat──▶  [your VPS]
+     │                            │
+  off / offline                   │
+     ✗                            ▼
+                             takes over, keeps working
 ```
 
-### ② 价格感知调度
+### 2. Pricing-aware scheduling
 
-基于 API 时段定价编排任务。**重活自动挪入半价窗口**，同一批工作成本减半。
+Heavy jobs move into off-peak API windows automatically. **Same work, half the cost.**
 
-### ③ Agent 边界写在 YAML 里
+### 3. Agent boundaries live in YAML
 
-每个 Agent 能写什么、要不要审批、只能读还是能执行 —— 在 `agents.yaml` 里声明，**运行时强制执行**，不是写在提示词里求模型自觉。
+What each agent can write, whether it needs approval, whether it is read-only or can execute — declared in `agents.yaml` and **enforced at runtime**, not requested from a model in a prompt.
 
-### ④ 规则引擎 + LLM，两层
+### 4. Rule engine + LLM, two tiers
 
-确定性指令走规则引擎，只把需要推理的交给 LLM。**省钱、可复现、可审计。**
+Deterministic work goes to the rule engine; only reasoning goes to the LLM. **Cheaper, reproducible, auditable.**
 
-### ⑤ Bring your own thinking kernel
+### 5. Bring your own thinking kernel
 
-不绑定任何模型。DSH / 任何能输出文本的 CLI 都行。也可以完全不用 LLM，只跑规则引擎。
+Not tied to any model. DSH, or any CLI that can output text. You can run it with no LLM at all and only use the rule engine.
 
 ---
 
 ## Comparison
 
-| | Grok Bot | Meta Muse | SaaS 助手 | **Vigiliae** |
+| | Grok Bot | Meta Muse | SaaS assistants | **Vigiliae** |
 |---|:-:|:-:|:-:|:-:|
-| 国内可用 | ❌ | ❌ | ✅ | ✅ |
-| 数据在自己手里 | ❌ | ❌ | ❌ | **✅** |
-| 24h 不间断 | ✅ | ✅ | ✅ | ✅ |
-| 关机后继续 | 不适用 | 不适用 | ✅ | **✅** |
-| 多 Agent 团队 | 部分 | ✅ | 部分 | **✅ 12 个** |
-| 可私有化 | ❌ | ❌ | 少数 | **✅** |
-| 可定制技能 | ❌ | 部分 | ❌ | **✅** |
-| 成本 | 高（$） | 高（$） | 中 | **低（服务器成本）** |
+| Available outside the US | ❌ | ❌ | ✅ | **✅** |
+| Data stays with you | ❌ | ❌ | ❌ | **✅** |
+| Always on | ✅ | ✅ | ✅ | ✅ |
+| Keeps working when you shut down | n/a | n/a | ✅ | **✅** |
+| Multi-agent team | partial | ✅ | partial | **✅ 12 agents** |
+| Self-hostable | ❌ | ❌ | few | **✅** |
+| Custom skills | ❌ | partial | ❌ | **✅** |
+| Cost | high ($) | high ($) | medium | **low (VPS only)** |
 
 ---
 
@@ -183,24 +157,26 @@ python -m vigiliae.report  --help    # 汇报：统一输出格式
 
 ```
 ┌─────────────────────────────────────────────┐
-│              Vigiliae (更柝)                  │
+│              Vigiliae                        │
 ├─────────────────────────────────────────────┤
-│  编排层：12 个 Agent（各有 YAML 配置）        │
+│  Orchestration: 12 agents (each YAML-config) │
 │    · write_perm / need_approve / exec_pref   │
 │    · reports_to / depends_on                 │
 ├─────────────────────────────────────────────┤
-│  技能层：memory / verify / patrol /          │
+│  Skills: memory / verify / patrol /          │
 │          collect / report                    │
 ├─────────────────────────────────────────────┤
-│  内核：规则引擎 + 价格调度 + 交接协议         │
+│  Core: rule engine + price scheduler +       │
+│        handoff protocol                      │
 ├─────────────────────────────────────────────┤
-│  存储：SQLite（任务/运行/审批/心跳）           │
+│  Storage: SQLite (tasks/runs/approvals/      │
+│           heartbeats)                        │
 ├─────────────────────────────────────────────┤
-│  大脑：DSH headless（可换任何 CLI）           │
+│  Brain: DSH headless (swappable CLI)         │
 └─────────────────────────────────────────────┘
 ```
 
-**详细的运行机制、数据流、状态机见 [ARCHITECTURE.md](ARCHITECTURE.md)。**
+**Runtime mechanics, data flow, and state machines: [ARCHITECTURE.md](ARCHITECTURE.md).**
 
 ---
 
@@ -210,47 +186,51 @@ python -m vigiliae.report  --help    # 汇报：统一输出格式
 # agents.yaml
 agents:
   - id: agent_myscraper
-    name: 我的采集器
-    desc: 每天早上 8 点采一次行业新闻
+    name: My Scraper
+    desc: Scrape industry news once a day at 08:00
     kind: python              # python | http | agent
     schedule: "cron:0 8 * * *"
     exec_pref: cloud          # local | cloud | either
-    write_perm: 0             # 只读
-    need_approve: 0           # 不需要审批
+    write_perm: 0             # read-only
+    need_approve: 0           # no approval needed
     payload:
       script: scripts/scrape.py
 ```
 
 ```bash
-vigiliae agents sync agents.yaml   # 同步进数据库
-vigiliae agents run agent_myscraper # 立即跑一次
+vigiliae agents sync agents.yaml      # sync into the database
+vigiliae agents run agent_myscraper   # run once now
 ```
 
-**完整参考见 [agents.yaml](agents.yaml)（12 个 Agent 的示例配置）。**
+**Full reference: [agents.yaml](agents.yaml) (12-agent example config).**
 
 ---
 
 ## API
 
 ```bash
-# 任务列表
+# List tasks
 curl http://localhost:8110/api/tasks
 
-# 运行状态
+# Runtime status
 curl http://localhost:8110/api/status
 
-# 手动触发
+# Trigger manually
 curl -X POST http://localhost:8110/api/tasks/agent_vigiliae/run
 
-# 审批
+# Approvals
 curl http://localhost:8110/api/approvals
 curl -X POST http://localhost:8110/api/approvals/1/decide -d '{"decision":"approve"}'
 
-# 交接
+# Handoff state
 curl http://localhost:8110/api/handover
 ```
 
-**完整 OpenAPI 见 [docs/api.md](docs/api.md)。**
+**Authentication:** the first request must carry `?k=<BOT_TOKEN>`; the app sets an
+HttpOnly cookie and later requests need no token. API calls with a valid `?k=`
+return 200 directly (no redirect); browser UI redirects to set the cookie.
+
+**Full OpenAPI: [docs/api.md](docs/api.md).**
 
 ---
 
@@ -260,42 +240,42 @@ curl http://localhost:8110/api/handover
 # .env
 VIGILIAE_PORT=8110
 VIGILIAE_DATA_DIR=./data
-BOT_TOKEN=your_token              # 可选，用于消息推送
-DSH_BIN=dsh                       # 思考内核的路径
-DSH_PROFILE=headless              # 用哪个 profile
-DEEPSEEK_API_KEY=sk-xxxx          # LLM Agent 需要
+BOT_TOKEN=your_token              # optional, for message push
+DSH_BIN=dsh                       # path to the thinking kernel
+DSH_PROFILE=headless              # which profile to boot
+DEEPSEEK_API_KEY=sk-xxxx          # required for LLM agents
 ```
 
-**所有配置项见 [docs/configuration.md](docs/configuration.md)。**
+**All options: [docs/configuration.md](docs/configuration.md).**
 
 ---
 
 ## Operating modes
 
-| 模式 | 说明 | 什么时候用 |
+| Mode | Description | When to use |
 |---|---|---|
-| `local` | 只在本机跑 | 开发/测试 |
-| `cloud` | 只在服务器跑 | 生产 |
-| `either` | 谁在线谁跑 | 默认（配合交接协议） |
-| `local_first` | 本机优先，离线时云端接管 | 有笔记本 + VPS 的场景 |
+| `local` | Runs only on your machine | Development / testing |
+| `cloud` | Runs only on the VPS | Production |
+| `either` | Whoever is online runs it | Default (with handoff) |
+| `local_first` | Local first, cloud takes over when offline | Laptop + VPS |
 
 ---
 
 ## Honest limitations
 
-**我们不想吹，以下是现在真的做不到的：**
+**We would rather tell you what does not work than oversell:**
 
 ```
-✗ 一键安装 —— 现在要 3 步（pip install / init / serve），还不是 curl | bash
-✗ 多租户 —— 单机单用户，没有租户隔离
-✗ 企业级审计 —— 只有基础运行日志，没有合规级审计
-✗ 云端电脑 —— Agent 不能操作 GUI / 点网页（Grok Bot 有，我们没有）
-✗ 行业技能包 —— 现在 5 个通用技能，没有行业包
-✗ 本地大模型 —— 现在通过 API 调 DeepSeek，还没接 Ollama
-✗ 真实用户 —— 除了我们自己，还没有外部用户
+✗ One-command install — it is 3 steps (pip install / init / serve), not yet curl | bash
+✗ Multi-tenancy — single host, single user, no tenant isolation
+✗ Enterprise audit — basic run logs only, not compliance-grade
+✗ Cloud computer — agents cannot drive a GUI or click web pages (Grok Bot can; we cannot)
+✗ Industry skill packs — 5 general skills, no vertical packs yet
+✗ Local model — currently calls DeepSeek via API, Ollama not wired yet
+✗ External users — apart from ourselves, nobody uses it in production yet
 ```
 
-**⭐ 这些都在 [Roadmap](#roadmap) 里，按优先级排着。**
+**⭐ Tracked in [Roadmap](#roadmap), ordered by priority.**
 
 ---
 
@@ -303,70 +283,73 @@ DEEPSEEK_API_KEY=sk-xxxx          # LLM Agent 需要
 
 ```
 2026 Q4
-  ✅ 12 个 Agent 编排
-  ✅ 本地↔云端交接
-  ✅ 价格感知调度
-  ✅ 5 个内置技能
-  ⏳ 一键安装（curl | bash）
-  ⏳ 首屏可视化（5 分钟看懂）
-  ⏳ README / 文档对外可读
+  ✅ 12-agent orchestration
+  ✅ Local↔cloud handoff
+  ✅ Pricing-aware scheduling
+  ✅ 5 built-in skills
+  ✅ Plugin-free verifiable skills (v2: --check + feedback)
+  ⏳ One-command install (curl | bash)
+  ⏳ Public demo you can understand in 5 minutes
+  ⏳ Clean English/Chinese split docs
 
 2027 Q1
-  ⏳ 行业技能包（碳数据 / 电商 / 法务）
-  ⏳ 浏览器自动化（Playwright）
-  ⏳ 多租户
-  ⏳ 企业级审计
+  ⏳ Industry skill packs (carbon data / e-commerce / legal)
+  ⏳ Browser automation (Playwright)
+  ⏳ Multi-tenancy
+  ⏳ Enterprise audit
 
 2027 Q2+
-  ⏳ 本地大模型（Ollama）
-  ⏳ 市场 / Agent 商店
+  ⏳ Local models (Ollama)
+  ⏳ Agent marketplace
 ```
 
 ---
 
-## 名字的故事
+## The name
 
-名字不是随便起的 —— **Vigiliae** 是罗马的「夜分四班」，**更柝** 是中国的「一夜五更」，两个文明独立发明了同一种制度：**把夜晚切成段，一段交一班人，班班相接**。
+The name is not arbitrary. **Vigiliae** is the Roman night divided into four watches; **更柝** (*gēng tuò*) is the Chinese night divided into five. Two civilisations, separated by continents and with no contact, arrived at the same institution: **cut the night into shifts and hand each shift to the next, so someone is always awake.**
 
-**完整考据见 [NAMING.md](NAMING.md) —— 包含《学说汇纂》《易经》《木兰辞》《周礼》《唐六典》的原文出处。**
+**Full sources — *Digesta*, the *I Ching*, the *Ballad of Mulan*, the *Rites of Zhou*, the *Tang Code* — in [NAMING.md](NAMING.md).**
 
 ---
 
 ## Contributing
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md)。我们特别欢迎：
+See [CONTRIBUTING.md](CONTRIBUTING.md). We especially welcome:
 
 ```
-· 行业技能包（你所在的行业，你知道缺什么）
-· 部署案例（你在什么环境装过，踩了什么坑）
-· Bug（尤其是跨平台/容器环境）
+· Industry skill packs (you know what your vertical is missing)
+· Deployment reports (what broke where)
+· Bugs, especially across platforms and containers
 ```
 
-**安全问题见 [SECURITY.md](SECURITY.md)。**
+**Security: [SECURITY.md](SECURITY.md).**
 
 ---
 
 ## License
 
-MIT —— 见 [LICENSE](LICENSE)。
+MIT — see [LICENSE](LICENSE).
 
-**⭐ 开源版是免费的、完整的、可商用的。企业版（多租户/审计/SSO）单独授权。**
+**⭐ The open-source edition is free, complete, and commercially usable. An enterprise edition (multi-tenancy / audit / SSO) is licensed separately.**
 
 ---
 
 ## Acknowledgements
 
 ```
-· DeepSeek Harness (DSH) —— 思考内核
-· 12 个 Agent 的命名考据 —— 荷马、赫西俄德、维吉尔、李维、
-  《学说汇纂》、《易经》、《诗经》、《楚辞》、《礼记》、《左传》、《唐六典》、《山海经》
-· 技能机制参考了 DSH 社区的开源插件（MIT）：
+· DeepSeek Harness (DSH) — the thinking kernel
+· The 12 names — Homer, Hesiod, Virgil, Livy, the Digesta,
+  the I Ching, the Book of Songs, the Chu Ci, the Book of Rites,
+  the Zuo Zhuan, the Tang Code, the Classic of Mountains and Seas
+· Skill mechanisms studied from MIT-licensed DSH community plugins:
   dsh-memory-manager / dsh-mcp-manager / dsh-skill-manager
-  我们学了它们的机制，用 Python 重写在 vigiliae 里 —— 不依赖任何插件
+  We studied the mechanisms and reimplemented them in Python inside
+  vigiliae — no plugin dependency.
 ```
 
 ---
 
 **Built by [Trustbase Lab](https://trustbaselab.com)**
 
-*一夜五更，班班相接。*
+*Four watches. Never a gap.*
