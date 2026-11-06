@@ -113,7 +113,7 @@ python -m vigiliae.report  --help    # Report: one output format
 
 **Each skill runs standalone and can be called by any agent.**
 
-**⭐ Every skill has a `--check <input.json>` that returns structured evidence, not just pass/fail. See [SKILLS.md](SKILLS.md).**
+**⭐ Every skill has a `--check <input.json>` that returns structured evidence, not just pass/fail. See [docs/AGENTS.md](docs/AGENTS.md).**
 
 ---
 
@@ -187,7 +187,7 @@ Not tied to any model. DSH, or any CLI that can output text. You can run it with
 └─────────────────────────────────────────────┘
 ```
 
-**Runtime mechanics, data flow, and state machines: [ARCHITECTURE.md](ARCHITECTURE.md).**
+**Runtime mechanics, data flow, and state machines: [ARCHITECTURE.md](docs/ARCHITECTURE.md).**
 
 ---
 

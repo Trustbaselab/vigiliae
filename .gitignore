@@ -39,3 +39,12 @@ README-OLD-*.md
 # local backups
 _v1_backup_*/
 *.new.py
+
+# python packaging
+*.egg-info/
+build/
+dist/
+
+# docs backups
+*.bak_*
+README*.bak*
