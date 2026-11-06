@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
+# ===== WORK MAP（v2，2026-11-06）=====
+# 目标：页面/服务/版本/备份四类巡检，输出检查项 -> 证据 -> 结论
+# 步骤：配置 -> 页面 GET -> 服务 health -> 版本 -> 备份年龄 -> issues
+# 输入：config/pages/service/data_version_file/site_version_url/backup_dir
+# 输出：{ok,issues[],snapshot}；v2 增加 checks[] 与 issue evidence
+# 依赖：标准库 urllib；文件系统；目标站点
+# 分支：非 200；服务 ok=false；版本缺失；备份缺失/过旧
+# ==========================================
 """更柝 Vigiliae · 系统巡检技能（patrol skill）
 
 学自：
@@ -316,6 +325,119 @@ def _self_test():
     print("OK patrol self-test: %s" % ", ".join(checks))
 
 
+
+# ===== v2: 反馈日志 + 统一 --check 入口（不改变原函数语义）=====
+_SKILL_NAME = "patrol"
+_HAS_MAIN = True
+_STATUS_LEGEND = {
+    "auto_verified": "自动验证通过（有证据链）",
+    "ai_evaluated": "AI 评估通过（本轮未做）",
+    "human_confirmed": "人工确认通过（本轮未做）",
+    "not_verified": "尚未验证/证据不足",
+}
+
+
+def _feedback_path():
+    data_dir = os.environ.get("VIGILIAE_DATA_DIR", "data")
+    return os.path.join(data_dir, "team", _SKILL_NAME, "feedback.jsonl")
+
+
+def record_feedback(issue, fix, prevention, evidence=None):
+    """把用户反馈写成可追踪的一行：issue -> fix -> prevention。"""
+    import time as _time
+    path = _feedback_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    rec = {
+        "at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "skill": _SKILL_NAME,
+        "issue": issue or "",
+        "fix": fix or "",
+        "prevention": prevention or "",
+        "evidence": evidence or {},
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return path
+
+
+def _arg_value(args, key, default=""):
+    if key in args:
+        i = args.index(key)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
+def _front(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--check" in args:
+        i = args.index("--check")
+        if i + 1 >= len(args):
+            print(json.dumps({"ok": False, "error": "--check needs an input JSON path"},
+                             ensure_ascii=False))
+            return 2
+        return _check_main(args[i + 1])
+    if "--feedback" in args:
+        issue = _arg_value(args, "--feedback")
+        if not issue:
+            print(json.dumps({"ok": False, "error": "--feedback needs an issue string"},
+                             ensure_ascii=False))
+            return 2
+        path = record_feedback(
+            issue, _arg_value(args, "--fix"), _arg_value(args, "--prevention"),
+            {"note": _arg_value(args, "--evidence")})
+        print(json.dumps({"ok": True, "feedback_log": path}, ensure_ascii=False))
+        return 0
+    if _HAS_MAIN:
+        return main(args)
+    print("用法: --check <input.json> | --feedback <issue> [--fix .. --prevention ..]")
+    return 2
+
+def _emit_check(payload):
+    payload.setdefault("skill", _SKILL_NAME)
+    payload["status_legend"] = _STATUS_LEGEND
+    payload.setdefault("ai_evaluation", {"status": "not_run"})
+    payload.setdefault("human_confirmation", {"status": "not_run"})
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload.get("status") == "auto_verified" else 2
+
+
+def _check_main(path):
+    try:
+        cfg = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return _emit_check({"status": "not_verified", "error": "cannot read config: %s" % e})
+    res = run_patrol(cfg)
+    snap = res.get("snapshot") or {}
+    checks = [
+        {"name": "pages", "status": "pass" if all(p.get("ok") for p in snap.get("pages", []))
+         else "fail", "evidence": snap.get("pages", [])},
+        {"name": "service", "status": "pass" if (not snap.get("service") or snap["service"].get("ok"))
+         else "fail", "evidence": snap.get("service")},
+        {"name": "version", "status": "pass" if (
+            (snap.get("version") or {}).get("data")
+            and (snap.get("version") or {}).get("site")
+            and (snap.get("version") or {}).get("data") == (snap.get("version") or {}).get("site")
+         ) else "fail", "evidence": snap.get("version")},
+        {"name": "backup", "status": "pass" if not any(
+            i.get("what") == "backup" for i in res.get("issues", [])) else "fail",
+         "evidence": snap.get("backup")},
+    ]
+    human = [i for i in res.get("issues", []) if i.get("level") in ("high", "medium")]
+    all_pass = bool(checks) and all(c.get("status") == "pass" for c in checks)
+    return _emit_check({
+        "status": "auto_verified" if (res.get("ok") and all_pass) else "not_verified",
+        "ok": res.get("ok"),
+        "checks": checks,
+        "issues": res.get("issues", []),
+        "snapshot": snap,
+        "human_review": human,
+        "scope": "ops_health_only",
+        "not_checked": ["content correctness", "backup restore"],
+        "feedback_log": _feedback_path(),
+    })
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Vigiliae page/version/backup/service patrol")
     p.add_argument("--test", action="store_true")
@@ -374,4 +496,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_front())

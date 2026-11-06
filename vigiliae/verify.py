@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import os
+
+# ===== WORK MAP（v2，2026-11-06）=====
+# 目标：验证一条来源是否可信，并给出可审计的证据链
+# 步骤：HTTP GET -> 正文归一化 -> quote 子串 -> 域名 A/B/C -> 不一致降级
+# 输入：name/source_url/quote/confidence_self
+# 输出：verified/actual_confidence/reasons/evidence；v2 增加整体 --check 状态
+# 依赖：标准库 urllib/html.parser；目标站点
+# 分支：HTTP 失败；quote 空/不命中；A/B/C；JSON/HTML
+# ==========================================
 """更柝 Vigiliae · 数据核验技能（verify skill）
 
 学自：
@@ -336,6 +346,124 @@ def _self_test():
     print("OK verify self-test: %s" % ", ".join(checks))
 
 
+
+# ===== v2: 反馈日志 + 统一 --check 入口（不改变原函数语义）=====
+_SKILL_NAME = "verify"
+_HAS_MAIN = True
+_STATUS_LEGEND = {
+    "auto_verified": "自动验证通过（有证据链）",
+    "ai_evaluated": "AI 评估通过（本轮未做）",
+    "human_confirmed": "人工确认通过（本轮未做）",
+    "not_verified": "尚未验证/证据不足",
+}
+
+
+def _feedback_path():
+    data_dir = os.environ.get("VIGILIAE_DATA_DIR", "data")
+    return os.path.join(data_dir, "team", _SKILL_NAME, "feedback.jsonl")
+
+
+def record_feedback(issue, fix, prevention, evidence=None):
+    """把用户反馈写成可追踪的一行：issue -> fix -> prevention。"""
+    import time as _time
+    path = _feedback_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    rec = {
+        "at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "skill": _SKILL_NAME,
+        "issue": issue or "",
+        "fix": fix or "",
+        "prevention": prevention or "",
+        "evidence": evidence or {},
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return path
+
+
+def _arg_value(args, key, default=""):
+    if key in args:
+        i = args.index(key)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
+def _front(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--check" in args:
+        i = args.index("--check")
+        if i + 1 >= len(args):
+            print(json.dumps({"ok": False, "error": "--check needs an input JSON path"},
+                             ensure_ascii=False))
+            return 2
+        return _check_main(args[i + 1])
+    if "--feedback" in args:
+        issue = _arg_value(args, "--feedback")
+        if not issue:
+            print(json.dumps({"ok": False, "error": "--feedback needs an issue string"},
+                             ensure_ascii=False))
+            return 2
+        path = record_feedback(
+            issue, _arg_value(args, "--fix"), _arg_value(args, "--prevention"),
+            {"note": _arg_value(args, "--evidence")})
+        print(json.dumps({"ok": True, "feedback_log": path}, ensure_ascii=False))
+        return 0
+    if _HAS_MAIN:
+        return main(args)
+    print("用法: --check <input.json> | --feedback <issue> [--fix .. --prevention ..]")
+    return 2
+
+def _emit_check(payload):
+    payload.setdefault("skill", _SKILL_NAME)
+    payload["status_legend"] = _STATUS_LEGEND
+    payload.setdefault("ai_evaluation", {"status": "not_run"})
+    payload.setdefault("human_confirmation", {"status": "not_run"})
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload.get("status") == "auto_verified" else 2
+
+
+def _check_main(path):
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return _emit_check({"status": "not_verified", "error": "cannot read input: %s" % e})
+    items = data if isinstance(data, list) else [data]
+    results = []
+    for it in items:
+        if not isinstance(it, dict):
+            results.append({"verified": False, "actual_confidence": "C",
+                            "reasons": ["invalid item"], "evidence": {}})
+            continue
+        results.append(verify_source(
+            it.get("name", ""), it.get("source_url", ""), it.get("quote", ""),
+            it.get("confidence_self", "B")))
+    evidence = [{
+        "name": r.get("name"),
+        "source_url": r.get("source_url"),
+        "http_status": (r.get("evidence") or {}).get("http_status"),
+        "quote_found": (r.get("evidence") or {}).get("quote_found"),
+        "domain_grade": (r.get("evidence") or {}).get("domain_grade"),
+        "actual_confidence": r.get("actual_confidence"),
+        "verified": r.get("verified"),
+        "reasons": r.get("reasons", []),
+    } for r in results]
+    ok = bool(results) and all(r.get("verified") for r in results)
+    human = [r for r in results if r.get("actual_confidence") == "C" or not r.get("verified")]
+    return _emit_check({
+        "status": "auto_verified" if ok else "not_verified",
+        "checked": len(results),
+        "verified": sum(1 for r in results if r.get("verified")),
+        "evidence": evidence,
+        "human_review": [{"source_url": r.get("source_url"),
+                          "actual_confidence": r.get("actual_confidence"),
+                          "reasons": r.get("reasons", [])} for r in human],
+        "scope": "source_http_quote_domain_only",
+        "source_verified": all(r.get("verified") for r in results),
+        "feedback_log": _feedback_path(),
+    })
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Vigiliae data source verifier")
     p.add_argument("--test", action="store_true", help="run offline self-test")
@@ -387,4 +515,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_front())

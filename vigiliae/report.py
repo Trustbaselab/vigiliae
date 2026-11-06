@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
+# ===== WORK MAP（v2，2026-11-06）=====
+# 目标：把 JSON 渲染成日报/巡检/审计 Markdown，并给出数据来源清单
+# 步骤：选择 daily/patrol/audit -> 渲染标题/表格/列表 -> 追加数据来源
+# 输入：type + data（v2 支持 sources[]）
+# 输出：Markdown；v2 --check 输出 data_sources/missing_sources/status
+# 依赖：标准库
+# 分支：空数据；issues 表；无 sources -> not_verified
+# ==========================================
 """更柝 Vigiliae · 统一汇报技能（report skill）
 
 学自：
@@ -222,6 +231,127 @@ def _self_test():
     print("OK report self-test: %s" % ", ".join(checks))
 
 
+
+# ===== v2: 反馈日志 + 统一 --check 入口（不改变原函数语义）=====
+_SKILL_NAME = "report"
+_HAS_MAIN = True
+_STATUS_LEGEND = {
+    "auto_verified": "自动验证通过（有证据链）",
+    "ai_evaluated": "AI 评估通过（本轮未做）",
+    "human_confirmed": "人工确认通过（本轮未做）",
+    "not_verified": "尚未验证/证据不足",
+}
+
+
+def _feedback_path():
+    data_dir = os.environ.get("VIGILIAE_DATA_DIR", "data")
+    return os.path.join(data_dir, "team", _SKILL_NAME, "feedback.jsonl")
+
+
+def record_feedback(issue, fix, prevention, evidence=None):
+    """把用户反馈写成可追踪的一行：issue -> fix -> prevention。"""
+    import time as _time
+    path = _feedback_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    rec = {
+        "at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "skill": _SKILL_NAME,
+        "issue": issue or "",
+        "fix": fix or "",
+        "prevention": prevention or "",
+        "evidence": evidence or {},
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return path
+
+
+def _arg_value(args, key, default=""):
+    if key in args:
+        i = args.index(key)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
+def _front(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--check" in args:
+        i = args.index("--check")
+        if i + 1 >= len(args):
+            print(json.dumps({"ok": False, "error": "--check needs an input JSON path"},
+                             ensure_ascii=False))
+            return 2
+        return _check_main(args[i + 1])
+    if "--feedback" in args:
+        issue = _arg_value(args, "--feedback")
+        if not issue:
+            print(json.dumps({"ok": False, "error": "--feedback needs an issue string"},
+                             ensure_ascii=False))
+            return 2
+        path = record_feedback(
+            issue, _arg_value(args, "--fix"), _arg_value(args, "--prevention"),
+            {"note": _arg_value(args, "--evidence")})
+        print(json.dumps({"ok": True, "feedback_log": path}, ensure_ascii=False))
+        return 0
+    if _HAS_MAIN:
+        return main(args)
+    print("用法: --check <input.json> | --feedback <issue> [--fix .. --prevention ..]")
+    return 2
+
+def _emit_check(payload):
+    payload.setdefault("skill", _SKILL_NAME)
+    payload["status_legend"] = _STATUS_LEGEND
+    payload.setdefault("ai_evaluation", {"status": "not_run"})
+    payload.setdefault("human_confirmation", {"status": "not_run"})
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload.get("status") == "auto_verified" else 2
+
+
+def _check_main(path):
+    try:
+        req = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return _emit_check({"status": "not_verified", "error": "cannot read input: %s" % e})
+    kind = req.get("type") or "daily"
+    data = req.get("data") if isinstance(req, dict) else {}
+    data = dict(data or {})
+    sources = data.get("sources") or []
+    valid_sources = [s for s in sources if isinstance(s, dict) and str(s.get("url", "")).strip()]
+    if valid_sources:
+        lines = ["", "## 数据来源", "", "| 来源 | URL | 时间 |", "|---|---|---|"]
+        for s in valid_sources:
+            lines.append("| %s | %s | %s |" % (
+                str(s.get("name", "")).replace("|", "\\|"),
+                str(s.get("url", "")).replace("|", "\\|"),
+                str(s.get("as_of", ""))))
+        data["_source_section"] = "\n".join(lines)
+    try:
+        md = render(kind, data)
+    except Exception as e:  # noqa: BLE001
+        return _emit_check({"status": "not_verified", "error": "render failed: %s" % e,
+                            "data_sources": sources})
+    if valid_sources:
+        md = md.rstrip() + "\n" + data["_source_section"] + "\n"
+        status = "auto_verified"
+        missing = []
+    else:
+        md = md.rstrip() + "\n\n## 数据来源\n\n（未提供来源清单；本报告未通过自动验收）\n"
+        status = "not_verified"
+        missing = ["sources[]"]
+    return _emit_check({
+        "status": status,
+        "type": kind,
+        "markdown": md,
+        "data_sources": valid_sources,
+        "missing_sources": missing,
+        "human_review": [] if valid_sources else [{"what": "data sources", "detail": "input has no valid sources[] with url"}],
+        "scope": "format_and_source_presence",
+        "not_checked": ["numeric accuracy", "source truth"],
+        "feedback_log": _feedback_path(),
+    })
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Vigiliae Markdown report renderer")
     p.add_argument("--test", action="store_true")
@@ -259,4 +389,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_front())

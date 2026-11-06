@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
+# ===== WORK MAP（v2，2026-11-06）=====
+# 目标：按 topic 从 sources 采集候选，不重复采，拒绝要留原因
+# 步骤：读 seen -> fetch/重试 -> 内容质量门 -> quote 单句化 -> accepted/rejected
+# 输入：topic/sources/seen_file/limit/timeout
+# 输出：{records[],stats{rejected}}；v2 增加 accepted/rejected 证据清单
+# 依赖：标准库 urllib/html.parser；目标站点；_SEEN_URLS.txt
+# 分支：非法 URL；seen；抓取失败；登录墙；正文短/占比低；去重
+# ==========================================
 """更柝 Vigiliae · 数据采集技能（collect skill）
 
 学自：
@@ -513,6 +522,118 @@ def _self_test():
     print("OK collect self-test: %s" % ", ".join(checks))
 
 
+
+# ===== v2: 反馈日志 + 统一 --check 入口（不改变原函数语义）=====
+_SKILL_NAME = "collect"
+_HAS_MAIN = True
+_STATUS_LEGEND = {
+    "auto_verified": "自动验证通过（有证据链）",
+    "ai_evaluated": "AI 评估通过（本轮未做）",
+    "human_confirmed": "人工确认通过（本轮未做）",
+    "not_verified": "尚未验证/证据不足",
+}
+
+
+def _feedback_path():
+    data_dir = os.environ.get("VIGILIAE_DATA_DIR", "data")
+    return os.path.join(data_dir, "team", _SKILL_NAME, "feedback.jsonl")
+
+
+def record_feedback(issue, fix, prevention, evidence=None):
+    """把用户反馈写成可追踪的一行：issue -> fix -> prevention。"""
+    import time as _time
+    path = _feedback_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    rec = {
+        "at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "skill": _SKILL_NAME,
+        "issue": issue or "",
+        "fix": fix or "",
+        "prevention": prevention or "",
+        "evidence": evidence or {},
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return path
+
+
+def _arg_value(args, key, default=""):
+    if key in args:
+        i = args.index(key)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
+def _front(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--check" in args:
+        i = args.index("--check")
+        if i + 1 >= len(args):
+            print(json.dumps({"ok": False, "error": "--check needs an input JSON path"},
+                             ensure_ascii=False))
+            return 2
+        return _check_main(args[i + 1])
+    if "--feedback" in args:
+        issue = _arg_value(args, "--feedback")
+        if not issue:
+            print(json.dumps({"ok": False, "error": "--feedback needs an issue string"},
+                             ensure_ascii=False))
+            return 2
+        path = record_feedback(
+            issue, _arg_value(args, "--fix"), _arg_value(args, "--prevention"),
+            {"note": _arg_value(args, "--evidence")})
+        print(json.dumps({"ok": True, "feedback_log": path}, ensure_ascii=False))
+        return 0
+    if _HAS_MAIN:
+        return main(args)
+    print("用法: --check <input.json> | --feedback <issue> [--fix .. --prevention ..]")
+    return 2
+
+def _emit_check(payload):
+    payload.setdefault("skill", _SKILL_NAME)
+    payload["status_legend"] = _STATUS_LEGEND
+    payload.setdefault("ai_evaluation", {"status": "not_run"})
+    payload.setdefault("human_confirmation", {"status": "not_run"})
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload.get("status") == "auto_verified" else 2
+
+
+def _check_main(path):
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return _emit_check({"status": "not_verified", "error": "cannot read input: %s" % e})
+    topic = data.get("topic", "") if isinstance(data, dict) else ""
+    sources = data.get("sources", []) if isinstance(data, dict) else data
+    seen = data.get("seen", "") if isinstance(data, dict) else ""
+    result = collect(topic, sources or [], seen_file=seen,
+                     write_seen=False)
+    accepted = []
+    missing = []
+    for r in result.get("records", []):
+        item = {"name": r.get("name"), "source_url": r.get("source_url"),
+                "quote": r.get("quote"), "source_kind": r.get("source_kind")}
+        if not item["source_url"] or not item["quote"]:
+            missing.append(item)
+        else:
+            accepted.append(item)
+    rejected = (result.get("stats") or {}).get("rejected", [])
+    status = "auto_verified" if (accepted and not missing and not rejected) else "not_verified"
+    return _emit_check({
+        "status": status,
+        "accepted": accepted,
+        "rejected": rejected,
+        "missing_source_or_quote": missing,
+        "stats": result.get("stats", {}),
+        "human_review": [{"reason": x.get("reason"), "url": x.get("url")} for x in rejected],
+        "scope": "record_structure_only",
+        "source_verified": False,
+        "next": "run verify on accepted records",
+        "feedback_log": _feedback_path(),
+    })
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Vigiliae gap-driven collector")
     p.add_argument("--test", action="store_true")
@@ -560,5 +681,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_front())
 

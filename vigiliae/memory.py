@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import sys
+
+# ===== WORK MAP（v2，2026-11-06）=====
+# 目标：跨会话记忆的写/读/搜/列/删 + 摘要注入
+# 步骤：解析 frontmatter -> 作用域目录 -> 脱敏 -> 去重提示 -> 原子写 -> 摘要预算
+# 输入：name/body/description/type/aliases/scope/cwd/home
+# 输出：{ok,name,similar,path}；摘要 Markdown；v2 增加 before/after diff
+# 依赖：标准库；VIGILIAE_MEMORY_HOME
+# 分支：global/project；同名合并；别名；脱敏幂等；近期带
+# ==========================================
 """更柝 Vigiliae · 记忆技能（memory skill）
 
 设计来源：学自 dsh-memory-manager（MIT），但重写为更柝自己的 Python 实现。
@@ -376,11 +386,145 @@ def build_digest(cwd=None, home=None, snapshot_time=None):
     return "\n".join(lines)
 
 
+
+# ===== v2: 反馈日志 + 统一 --check 入口（不改变原函数语义）=====
+_SKILL_NAME = "memory"
+_HAS_MAIN = False
+_STATUS_LEGEND = {
+    "auto_verified": "自动验证通过（有证据链）",
+    "ai_evaluated": "AI 评估通过（本轮未做）",
+    "human_confirmed": "人工确认通过（本轮未做）",
+    "not_verified": "尚未验证/证据不足",
+}
+
+
+def _feedback_path():
+    data_dir = os.environ.get("VIGILIAE_DATA_DIR", "data")
+    return os.path.join(data_dir, "team", _SKILL_NAME, "feedback.jsonl")
+
+
+def record_feedback(issue, fix, prevention, evidence=None):
+    """把用户反馈写成可追踪的一行：issue -> fix -> prevention。"""
+    import time as _time
+    path = _feedback_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    rec = {
+        "at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "skill": _SKILL_NAME,
+        "issue": issue or "",
+        "fix": fix or "",
+        "prevention": prevention or "",
+        "evidence": evidence or {},
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return path
+
+
+def _arg_value(args, key, default=""):
+    if key in args:
+        i = args.index(key)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
+def _front(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--check" in args:
+        i = args.index("--check")
+        if i + 1 >= len(args):
+            print(json.dumps({"ok": False, "error": "--check needs an input JSON path"},
+                             ensure_ascii=False))
+            return 2
+        return _check_main(args[i + 1])
+    if "--feedback" in args:
+        issue = _arg_value(args, "--feedback")
+        if not issue:
+            print(json.dumps({"ok": False, "error": "--feedback needs an issue string"},
+                             ensure_ascii=False))
+            return 2
+        path = record_feedback(
+            issue, _arg_value(args, "--fix"), _arg_value(args, "--prevention"),
+            {"note": _arg_value(args, "--evidence")})
+        print(json.dumps({"ok": True, "feedback_log": path}, ensure_ascii=False))
+        return 0
+    if _HAS_MAIN:
+        return main(args)
+    print("用法: --check <input.json> | --feedback <issue> [--fix .. --prevention ..]")
+    return 2
+
+def _emit_check(payload):
+    payload.setdefault("skill", _SKILL_NAME)
+    payload["status_legend"] = _STATUS_LEGEND
+    payload.setdefault("ai_evaluation", {"status": "not_run"})
+    payload.setdefault("human_confirmation", {"status": "not_run"})
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload.get("status") == "auto_verified" else 2
+
+
+def _note_text(note):
+    if not note:
+        return ""
+    return "name: %s\ndescription: %s\ntype: %s\n\n%s" % (
+        note.get("name", ""), note.get("description", ""),
+        note.get("type", ""), note.get("body", ""))
+
+
+def _check_main(path):
+    import difflib
+    try:
+        req = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return _emit_check({"status": "not_verified", "error": "cannot read input: %s" % e})
+    op = req.get("operation") or req.get("op") or "write"
+    home = req.get("home") or os.environ.get("VIGILIAE_MEMORY_HOME")
+    scope = req.get("scope", "project")
+    name = req.get("name", "")
+    before = memory_read(name, scope=scope, home=home).get("note") if name else None
+    if op == "write":
+        r = memory_write(name, req.get("body", ""), req.get("description", ""),
+                         req.get("type", "fact"), req.get("aliases"), scope=scope, home=home)
+    elif op == "delete":
+        r = memory_delete(name, scope=scope, home=home)
+    elif op in ("read", "search", "list"):
+        r = {"ok": True, "op": op}
+    else:
+        return _emit_check({"status": "not_verified", "error": "unknown operation: %s" % op})
+    after = memory_read(name, scope=scope, home=home).get("note") if name and op != "delete" else None
+    before_s, after_s = _note_text(before), _note_text(after)
+    diff = list(difflib.unified_diff(before_s.splitlines(), after_s.splitlines(),
+                                     fromfile="before", tofile="after", lineterm=""))
+    changed = before_s != after_s
+    human = []
+    if op == "delete":
+        human.append({"what": "delete", "detail": "删除属于决定，必须人工确认"})
+    if r.get("ok"):
+        status = "human_review" if op == "delete" else "auto_verified"
+    else:
+        status = "not_verified"
+    return _emit_check({
+        "status": status,
+        "operation": op,
+        "result": r,
+        "changed": changed,
+        "diff": "\n".join(diff),
+        "before_chars": len(before_s),
+        "after_chars": len(after_s),
+        "human_review": human,
+        "scope": "file_diff_only",
+        "not_checked": ["semantic correctness"],
+        "feedback_log": _feedback_path(),
+    })
+
+
 # ══════════════════════════════════════════════════════════════
 # CLI（方便测试）
 # ══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     import sys
+    if "--check" in sys.argv or "--feedback" in sys.argv:
+        raise SystemExit(_front())
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
 
     if cmd == "test":
