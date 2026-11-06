@@ -5,7 +5,7 @@ import os
 import threading
 import traceback
 
-from flask import Flask, jsonify, make_response, redirect, request
+from flask import Flask, g, jsonify, make_response, redirect, request
 
 from . import auth, bridge, config
 from .agents import load_agents
@@ -46,6 +46,13 @@ def _check_auth():
 
     query_token = request.args.get("k")
     if query_token and auth.token_ok(query_token):
+        # For an API call, don't redirect: a one-shot
+        #   curl -L 'http://host:port/api/tasks?k=TOKEN'
+        # should return data and seed the cookie on the same response.
+        # Browser/page requests still redirect so the URL is cleaned up.
+        if path.startswith("/api/"):
+            g._issue_auth_cookie = True
+            return None
         args = {k: v for k, v in request.args.items() if k != "k"}
         qs = "&".join("%s=%s" % (k, v) for k, v in args.items())
         target = path + ("?" + qs if qs else "")
@@ -58,6 +65,16 @@ def _check_auth():
     if path.startswith("/api/"):
         return jsonify({"ok": False, "error": "unauthorized"}), 401
     return auth.LOGIN_PAGE, 401, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.after_request
+def _issue_auth_cookie(response):
+    """Set the cookie when an API request authenticated via ?k=TOKEN."""
+    if getattr(g, "_issue_auth_cookie", False):
+        response.set_cookie(config.COOKIE_NAME, auth.get_bot_token(),
+                            max_age=config.COOKIE_MAX_AGE, httponly=True,
+                            samesite="Lax", path="/")
+    return response
 
 
 @app.route("/login")
@@ -204,9 +221,24 @@ def api_approval_decision(approval_id):
     data = request.get_json(force=True, silent=True) or {}
     decision = "approved" if data.get("approve") else "rejected"
     with db() as conn:
+        row = conn.execute(
+            "SELECT task_id, status FROM approvals WHERE id=?", (approval_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "approval not found"}), 404
+        if row["status"] != "pending":
+            return jsonify({"ok": False, "error": "approval already decided",
+                            "status": row["status"]}), 409
         conn.execute("UPDATE approvals SET status=?, decided_at=?, note=? WHERE id=?",
                      (decision, now_str(), data.get("note") or "", approval_id))
-    return jsonify({"ok": True, "status": decision})
+    task_id = row["task_id"]
+    if decision == "approved":
+        # The approval gate parked the run; resume it exactly once, bypassing
+        # the gate so it does not create a second pending approval.
+        threading.Thread(
+            target=run_task, args=(task_id, "approved"),
+            kwargs={"approved": True}, daemon=True).start()
+    return jsonify({"ok": True, "status": decision, "task_id": task_id,
+                    "resumed": decision == "approved"})
 
 
 # ---------------------------------------------------------------------------

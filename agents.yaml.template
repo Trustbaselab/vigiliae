@@ -1,198 +1,417 @@
-# ===========================================================================
-# CloudBot agent team template.
-# Copy to `agents.yaml` and edit:   cp agents.yaml.template agents.yaml
-# Then register the agents as scheduled tasks:
-#   python -m cloudbot.agents sync
-# or, inside Docker:
-#   docker compose exec cloudbot python -m cloudbot.agents sync
-#
-# Boundaries are enforced by the runtime, not by the prompt. `deny` entries are
-# shown to the model, but the runtime also applies the read-only / approval
-# gates described in docs/AGENTS.md.
-# ===========================================================================
-
 team:
-  name: "My Cloud Team"
-  orchestrator: "briefer"        # the agent that writes the daily summary
-  report_to: "local"             # local | task_bus
-
+  name: Vigiliae · Twelve Watches / 十二守夜人
+  orchestrator: vigiliae
+  report_to: local
+  report_dir: data/team
 agents:
+- name: vigiliae
+  role: Night Watch Orchestrator / 更柝
+  description: 'Own the night: decide who is on duty, what runs next, when to escalate.'
+  kind: agent
+  schedule: every:300
+  timeout: 600
+  heavy: false
+  write_perm: true
+  need_approve: false
+  exec_pref: cloud
+  reports_to: human
+  depends_on: []
+  outputs:
+  - data/team/vigiliae/
+  boundaries:
+    allow:
+    - read task/run/approval state
+    - read all agent reports
+    - write one overview report
+    - raise an escalation
+    deny:
+    - approve its own escalation
+    - edit another agent's report
+    - delete data
+    - change code
+  prompt: 'You are Vigiliae, the night-watch orchestrator.
 
-  # -----------------------------------------------------------------------
-  - name: "scout"
-    role: "Data collection & QA"
-    description: "Collect public data nightly, attach source URLs and confidence, report deltas."
-    schedule: "cron:0 20 * * *"   # 20:00 local, off-peak
-    timeout: 1800
-    heavy: true                    # may be deferred during peak-price windows
-    boundaries:
-      allow:
-        - "fetch public pages that respect robots.txt"
-        - "normalise records and assign A/B/C/D/E confidence"
-        - "append to the dataset through the backup + validation flow"
-        - "post a summary to the task bus"
-      deny:
-        - "delete any record"
-        - "change the source_url of an existing record"
-        - "bypass robots.txt or rate limits"
-        - "collect personal data (phone, ID, email, messenger IDs)"
-        - "deploy code"
-    prompt: |
-      You are the data-collection agent for a small research team.
+    TASK: read data/team/*/latest.json and the last 20 runs; write a 200-word
 
-      TASK
-      1. Collect 100-200 new records from public sources.
-      2. Every record must carry: source_url, confidence (A/B/C/D/E), as_of.
-      3. If a source cannot be verified, mark it E and write "unverified".
-      4. Do not collect personal data. Respect robots.txt.
+    overview: (1) who is on duty, (2) what is blocked, (3) the single next
 
-      BOUNDARIES
-      - Never delete records.
-      - Never change an existing record's source_url.
-      - If blocked, stop and report the blocker.
+    action, (4) one escalation to the human if needed.
 
-      REPORT (under 400 words)
-      - new records, by confidence
-      - the most interesting finding
-      - blockers
+    BOUNDARIES: never invent a status; cite a run_id or file; do not decide
 
-  # -----------------------------------------------------------------------
-  - name: "policy-watch"
-    role: "Policy & competitor monitoring"
-    description: "Scan official sources and competitors nightly; report changes only."
-    schedule: "cron:30 20 * * *"
-    timeout: 1500
-    heavy: true
-    boundaries:
-      allow:
-        - "read official regulator / standards-body pages"
-        - "read competitor sites and public reporting"
-        - "read our own data for comparison"
-        - "post a summary to the task bus"
-      deny:
-        - "present speculation as fact"
-        - "publish a conclusion without a URL"
-        - "modify our data"
-    prompt: |
-      You are the policy & competitor monitoring agent.
+    for the human; do not edit other reports.
 
-      TASK
-      1. Scan the official sources listed in your workspace notes.
-      2. Scan the competitors listed in your workspace notes.
-      3. Report CHANGES only. If nothing changed, say "no material change today".
+    REPORT: markdown under 200 words; end with "next: <one action>".
 
-      BOUNDARIES
-      - Every claim must have a URL.
-      - If you cannot find it, say "not found". Do not guess.
-      - Never modify our data.
+    SKILLS: memory（团队记忆）、report（日报/总览）、verify（抽查来源）。先看 data/team/*/latest.json。'
+  skills:
+  - memory
+  - report
+  - verify
+- name: hesperus
+  role: Dual-State Presence / 长庚
+  description: Watch local heartbeat and cloud takeover; report only state changes.
+  kind: http
+  schedule: every:30
+  timeout: 30
+  heavy: false
+  write_perm: false
+  need_approve: false
+  exec_pref: cloud
+  reports_to: vigiliae
+  depends_on:
+  - vigiliae
+  outputs:
+  - data/team/hesperus/
+  payload:
+    url: ${VIGILIAE_BASE_URL}/api/handover
+    method: GET
+    headers:
+      Cookie: cb_auth=${BOT_TOKEN}
+  prompt: 'Contract: read /api/handover; if role changes, report the transition.
 
-      REPORT (under 300 words)
-      - material changes (or "none")
-      - policy changes (max 2, with URL)
-      - competitor moves (max 2, with URL)
-      - impact + recommended action (max 2)
+    SKILLS: memory（交接记录）、patrol（服务/心跳健康）。只报状态变化，不写任务。'
+  skills:
+  - memory
+  - patrol
+- name: sol-et-luna
+  role: Shift and Price Clock / 代明
+  description: Own the schedule and peak/off-peak clock; propose, do not enforce.
+  kind: http
+  schedule: every:300
+  timeout: 30
+  heavy: false
+  write_perm: false
+  need_approve: false
+  exec_pref: cloud
+  reports_to: vigiliae
+  depends_on:
+  - vigiliae
+  outputs:
+  - data/team/sol-et-luna/
+  payload:
+    url: ${VIGILIAE_BASE_URL}/api/price_slot
+    method: GET
+    headers:
+      Cookie: cb_auth=${BOT_TOKEN}
+  prompt: 'Contract: read /api/price_slot; report the current window and next change.
 
-  # -----------------------------------------------------------------------
-  - name: "regression-guard"
-    role: "Regression testing"
-    description: "Run the evaluation suite nightly; alert on any score drop."
-    schedule: "cron:0 21 * * *"
-    timeout: 1800
-    heavy: true
-    boundaries:
-      allow:
-        - "run evaluation scripts"
-        - "read MCP/tool responses"
-        - "post a summary to the task bus"
-        - "raise an alert on failure"
-      deny:
-        - "edit the evaluation questions"
-        - "edit product code"
-        - "report a failure as a success"
-    prompt: |
-      You are the regression-testing agent.
+    SKILLS: memory（班次记忆）、patrol（服务健康）。只建议班次，不改调度。'
+  skills:
+  - memory
+  - patrol
+- name: nox-media
+  role: Cost Window Guard / 夜分
+  description: Audit every deferred heavy job and report the cost window.
+  kind: http
+  schedule: every:60
+  timeout: 30
+  heavy: false
+  write_perm: false
+  need_approve: false
+  exec_pref: cloud
+  reports_to: sol-et-luna
+  depends_on:
+  - sol-et-luna
+  outputs:
+  - data/team/nox-media/
+  payload:
+    url: ${VIGILIAE_BASE_URL}/api/deferred
+    method: GET
+    headers:
+      Cookie: cb_auth=${BOT_TOKEN}
+  prompt: 'Contract: read /api/deferred; report count, oldest deferral, next off-peak.
 
-      TASK
-      1. Run the evaluation suite configured in your workspace.
-      2. If the suite is missing, fall back to 10 manual spot checks.
-      3. Compare with the previous score.
+    SKILLS: memory（成本窗口记忆）、report（成本报告）。只建议 defer，不强制运行。'
+  skills:
+  - memory
+  - report
+- name: annales
+  role: Chronicler / 春秋
+  description: Append-only record of runs, approvals, messages, and changes.
+  kind: python
+  schedule: every:900
+  timeout: 60
+  heavy: false
+  write_perm: true
+  need_approve: false
+  exec_pref: cloud
+  reports_to: vigiliae
+  depends_on:
+  - vigiliae
+  outputs:
+  - data/team/annales/
+  payload:
+    code: "import json, os, sqlite3, time\ndata_dir = os.environ.get(\"VIGILIAE_DATA_DIR\", \"data\")\ndb_path = os.environ.get(\"\
+      VIGILIAE_DB\") or os.path.join(data_dir, \"vigiliae.db\")\nout = os.path.join(data_dir, \"team\", \"annales\", \"ledger.jsonl\"\
+      )\nos.makedirs(os.path.dirname(out), exist_ok=True)\nconn = sqlite3.connect(db_path); conn.row_factory = sqlite3.Row\n\
+      rows = conn.execute(\"SELECT run_id,task_id,status,started_at,finished_at FROM runs ORDER BY run_id DESC LIMIT 20\"\
+      ).fetchall()\nwith open(out, \"a\", encoding=\"utf-8\") as f:\n  for r in reversed(rows):\n    f.write(json.dumps(dict(r),\
+      \ ensure_ascii=False) + \"\\n\")\nprint(\"annales: appended\", len(rows))\n"
+  prompt: 'Contract: append-only; never update/delete a prior line.
 
-      BOUNDARIES
-      - Never edit the questions.
-      - Never report a failure as a success.
-      - If the score drops below the threshold, say ALERT explicitly.
+    SKILLS: memory（编年摘要）、report（审计/日报）、verify（抽查来源）。只追加，不改历史。'
+  skills:
+  - memory
+  - report
+  - verify
+- name: libra
+  role: Verifier / 权衡
+  description: Check every artifact for sources, confidence, and test evidence.
+  kind: python
+  schedule: cron:0 2 * * *
+  timeout: 900
+  heavy: true
+  write_perm: true
+  need_approve: false
+  exec_pref: cloud
+  reports_to: vigiliae
+  depends_on:
+  - annales
+  outputs:
+  - data/team/libra/
+  boundaries:
+    allow:
+    - read data/team/*/latest.json
+    - read source URLs and tests
+    - write verification
+    deny:
+    - edit artifacts
+    - invent a source
+    - mark unknown as verified
+  prompt: 'You are Libra, the verifier. For each artifact in data/team/:
 
-      REPORT (under 200 words)
-      - suite result
-      - delta vs last run
-      - failing case IDs
+    check source URLs, evidence grade (A-E), as_of, and test evidence.
 
-  # -----------------------------------------------------------------------
-  - name: "analyst"
-    role: "Business analysis"
-    description: "Produce one decision memo per night for the next morning."
-    schedule: "cron:0 22 * * *"
-    timeout: 1800
-    heavy: true
-    boundaries:
-      allow:
-        - "read all data tools"
-        - "read task history"
-        - "write an analysis report and post it"
-      deny:
-        - "invent numbers"
-        - "give medical or legal advice"
-        - "modify any data"
-        - "recommend actions the team cannot execute"
-    prompt: |
-      You are the business analyst for a two-person team.
+    Output {"artifact":..., "grade":..., "ok":true/false, "gaps":[...]}.
 
-      TASK
-      1. Read the latest data and the last few days of task reports.
-      2. Write "what the founder should look at tomorrow".
+    Never mark "unknown" as "verified"; say "not found".
 
-      BOUNDARIES
-      - If the data is missing, say "not in the data".
-      - Never invent numbers.
-      - No medical or legal advice.
-      - Recommendations must be executable by one person.
+    SKILLS: verify（核验 candidates.json）、memory（核验规则）。A/B 才放行；C 或失败降级。'
+  skills:
+  - verify
+  - memory
+  payload:
+    code: "import json, os, sys\nfrom vigiliae.verify import verify_source\ndata_dir = os.environ.get(\"VIGILIAE_DATA_DIR\"\
+      , \"data\")\ninp = os.path.join(data_dir, \"team\", \"candidates.json\")\nout = os.path.join(data_dir, \"team\", \"\
+      libra\", \"verified.json\")\nos.makedirs(os.path.dirname(out), exist_ok=True)\nif not os.path.exists(inp):\n    print(\"\
+      libra: no candidates.json; nothing to verify\")\n    sys.exit(0)\nitems = json.load(open(inp, encoding=\"utf-8\"))\n\
+      if isinstance(items, dict):\n    items = items.get(\"items\") or items.get(\"records\") or [items]\nresults = []\nfor\
+      \ it in items:\n    results.append(verify_source(\n        it.get(\"name\", \"\"), it.get(\"source_url\", \"\"), it.get(\"\
+      quote\", \"\"),\n        it.get(\"confidence_self\", \"B\")))\njson.dump(results, open(out, \"w\", encoding=\"utf-8\"\
+      ), ensure_ascii=False, indent=2)\nprint(\"libra: verified %d/%d; A/B=%d\" % (\n    sum(1 for r in results if r.get(\"\
+      verified\")), len(results),\n    sum(1 for r in results if r.get(\"actual_confidence\") in (\"A\", \"B\"))))\n"
+- name: nuntius
+  role: Messenger / 行人
+  description: Merge agent reports into one morning brief and post it.
+  kind: python
+  schedule: cron:0 8 * * *
+  timeout: 120
+  heavy: false
+  write_perm: true
+  need_approve: false
+  exec_pref: either
+  reports_to: vigiliae
+  depends_on:
+  - annales
+  - libra
+  - taeda
+  outputs:
+  - data/team/nuntius/
+  payload:
+    code: "import glob, json, os, urllib.request\nbase = os.environ.get(\"VIGILIAE_BASE_URL\", \"${VIGILIAE_BASE_URL}\")\n\
+      from vigiliae.report import render_daily\ndata_dir = os.environ.get(\"VIGILIAE_DATA_DIR\", \"data\")\nteam = os.path.join(data_dir,\
+      \ \"team\")\nreports = []\nfor p in sorted(glob.glob(os.path.join(team, \"*\", \"latest.json\"))):\n    try:\n     \
+      \   reports.append(json.load(open(p, encoding=\"utf-8\")))\n    except (OSError, ValueError):\n        pass\ndaily =\
+      \ {\n    \"date\": __import__(\"datetime\").datetime.now().strftime(\"%Y-%m-%d\"),\n    \"done\": [\"12 守夜人本轮报告 %d 份\"\
+      \ % len(reports)],\n    \"changes\": [{\"text\": r.get(\"agent\", \"?\"), \"detail\": (r.get(\"output\") or \"\")[:120]}\n\
+      \                for r in reports[:12]],\n    \"decisions\": [],\n    \"blocked\": [],\n    \"next\": [\"继续观察 patrol/verify\
+      \ 结果\"],\n}\nbody = render_daily(daily)\nout = os.path.join(team, \"nuntius\", \"brief.md\")\nos.makedirs(os.path.dirname(out),\
+      \ exist_ok=True)\nopen(out, \"w\", encoding=\"utf-8\").write(body)\nheaders = {\"Content-Type\": \"application/json\"\
+      }\ntoken = os.environ.get(\"BOT_TOKEN\")\nif token:\n    headers[\"Cookie\"] = \"cb_auth=\" + token\nreq = urllib.request.Request(\n\
+      \    base + \"/api/messages\",\n    data=json.dumps({\"sender\": \"dsh\", \"body\": body[:7000]}).encode(),\n    headers=headers,\
+      \ method=\"POST\")\nurllib.request.urlopen(req, timeout=10).read()\nprint(\"nuntius: report %d chars, posted\" % len(body))\n"
+  prompt: 'Contract: only reads data/team/*/latest.json; writes one brief; posts one message.
 
-      REPORT (under 500 words)
-      - one-sentence conclusion
-      - three things worth watching (each with evidence)
-      - one thing to do tomorrow
-      - one thing nobody is doing but should be
+    SKILLS: report（渲染日报）、memory（收件人偏好）。只读报告，不决策。'
+  skills:
+  - report
+  - memory
+- name: porta
+  role: Gatekeeper / 阊阖
+  description: Read pending approvals and permissions; escalate stale gates.
+  kind: python
+  schedule: every:120
+  timeout: 30
+  heavy: false
+  write_perm: true
+  need_approve: false
+  exec_pref: cloud
+  reports_to: human
+  depends_on:
+  - vigiliae
+  outputs:
+  - data/team/porta/
+  payload:
+    code: "import json, os, urllib.request\nfrom vigiliae.patrol import run_patrol\ndata_dir = os.environ.get(\"VIGILIAE_DATA_DIR\"\
+      , \"data\")\nbase = os.environ.get(\"VIGILIAE_BASE_URL\", \"${VIGILIAE_BASE_URL}\")\ncfg = {\n    \"pages\": [base\
+      \ + \"/\"],\n    \"service\": base + \"/api/health\",\n    \"data_version_file\": os.path.join(data_dir, \"version.json\"\
+      ),\n    \"backup_dir\": os.path.join(data_dir, \"backups\"),\n    \"max_backup_age_hours\": 26,\n    \"timeout\": 10,\n\
+      }\nres = run_patrol(cfg)\npending = 0\ntry:\n    headers = {}\n    token = os.environ.get(\"BOT_TOKEN\")\n    if token:\n\
+      \        headers[\"Cookie\"] = \"cb_auth=\" + token\n    req = urllib.request.Request(base + \"/api/approvals\", headers=headers)\n\
+      \    data = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())\n    pending = len([a for a in data.get(\"\
+      approvals\", []) if a.get(\"status\") == \"pending\"])\nexcept Exception as e:\n    res[\"issues\"].append({\"level\"\
+      : \"medium\", \"what\": \"approvals\", \"detail\": str(e)[:300]})\nout = os.path.join(data_dir, \"team\", \"porta\"\
+      , \"gates.json\")\nos.makedirs(os.path.dirname(out), exist_ok=True)\njson.dump({\"patrol\": res, \"pending_approvals\"\
+      : pending}, open(out, \"w\", encoding=\"utf-8\"),\n          ensure_ascii=False, indent=2)\nprint(\"porta: ok=%s issues=%d\
+      \ pending_approvals=%d\" % (res[\"ok\"], len(res[\"issues\"]), pending))\n"
+  prompt: 'Contract: list pending approvals with age and task_id; never approve
 
-  # -----------------------------------------------------------------------
-  - name: "briefer"
-    role: "Orchestration & daily brief"
-    description: "Aggregate every agent's report into one morning brief."
-    schedule: "cron:0 8 * * *"
-    timeout: 1200
-    heavy: false
-    boundaries:
-      allow:
-        - "read all agent reports"
-        - "read the task history"
-        - "write the morning brief and send it as a CloudBot message"
-      deny:
-        - "make decisions on the founder's behalf"
-        - "hide failures"
-        - "invent progress"
-    prompt: |
-      You are the orchestration agent.
+    on behalf of a human; escalate if age > 30 min.
 
-      TASK
-      1. Read last night's reports from the other agents.
-      2. Merge them into one morning brief.
+    SKILLS: patrol（健康门禁）、verify（入口来源）、memory（审批规则）。不自批。'
+  skills:
+  - patrol
+  - verify
+  - memory
+- name: taeda
+  role: Lamp / 庭燎
+  description: Turn system state into a readable status page for humans.
+  kind: python
+  schedule: every:300
+  timeout: 60
+  heavy: false
+  write_perm: true
+  need_approve: false
+  exec_pref: either
+  reports_to: nuntius
+  depends_on:
+  - hesperus
+  - sol-et-luna
+  outputs:
+  - data/team/taeda/
+  payload:
+    code: "import json, os\nfrom vigiliae.patrol import run_patrol\ndata_dir = os.environ.get(\"VIGILIAE_DATA_DIR\", \"data\"\
+      )\nbase = os.environ.get(\"VIGILIAE_BASE_URL\", \"${VIGILIAE_BASE_URL}\")\ncfg = {\n    \"pages\": [base + \"/\"],\n\
+      \    \"service\": base + \"/api/health\",\n    \"data_version_file\": os.path.join(data_dir, \"version.json\"),\n  \
+      \  \"backup_dir\": os.path.join(data_dir, \"backups\"),\n    \"max_backup_age_hours\": 26,\n    \"timeout\": 10,\n}\n\
+      res = run_patrol(cfg)\nout = os.path.join(data_dir, \"team\", \"taeda\", \"health.json\")\nos.makedirs(os.path.dirname(out),\
+      \ exist_ok=True)\njson.dump(res, open(out, \"w\", encoding=\"utf-8\"), ensure_ascii=False, indent=2)\nprint(\"taeda:\
+      \ ok=%s issues=%d\" % (res[\"ok\"], len(res[\"issues\"])))\n"
+  prompt: 'Contract: read /api/status only; write status.md; never mutate state.
 
-      BOUNDARIES
-      - Do not decide for the founder.
-      - Do not hide failures.
-      - Do not invent progress.
+    SKILLS: patrol（四类巡检）、report（状态页）、memory（状态变化）。只做灯，不做决策。'
+  skills:
+  - patrol
+  - report
+  - memory
+- name: arachne
+  role: Weaver / 织女
+  description: Link entities, sources, and topics into a reviewable graph.
+  kind: agent
+  schedule: cron:0 3 * * *
+  timeout: 1200
+  heavy: true
+  write_perm: true
+  need_approve: true
+  exec_pref: cloud
+  reports_to: annales
+  depends_on:
+  - annales
+  - libra
+  outputs:
+  - data/team/arachne/
+  boundaries:
+    allow:
+    - read dataset and sources
+    - propose graph edges
+    - write a diff, not the dataset
+    deny:
+    - write the dataset directly
+    - invent an edge without source
+    - delete a node
+  prompt: 'You are Arachne. Read the dataset and sources; propose graph edges
 
-      REPORT (under 400 words)
-      - what each agent did (one line each)
-      - new findings
-      - what broke
-      - what to read first today
+    (entity, relation, target, source_url, confidence). Write only a diff;
+
+    never mutate the dataset.
+
+    SKILLS: verify（每条边必须有 verified 来源）、memory（图谱记忆）。只写 diff。'
+  skills:
+  - verify
+  - memory
+- name: sator
+  role: Seeder / 后稷
+  description: Collect and expand candidate records; diff before write.
+  kind: python
+  schedule: cron:30 20 * * *
+  timeout: 1800
+  heavy: true
+  write_perm: true
+  need_approve: true
+  exec_pref: cloud
+  reports_to: annales
+  depends_on:
+  - annales
+  - libra
+  outputs:
+  - data/team/sator/
+  boundaries:
+    allow:
+    - read public sources
+    - propose new records
+    - write a diff only
+    deny:
+    - write the dataset directly
+    - delete records
+    - personal data
+    - bypass robots.txt
+  prompt: 'You are Sator. Collect 50-100 candidate records. Each must have
+
+    source_url, confidence A-E, as_of. Write only a diff; mark unverifiable as E.
+
+    Never write the dataset directly.
+
+    SKILLS: collect（按 sources.json 采集 + seen 去重）、verify（采后核验）、memory（缺口记忆）。只写 diff。'
+  skills:
+  - collect
+  - verify
+  - memory
+  payload:
+    code: "import json, os, sys\nfrom vigiliae.collect import collect\ndata_dir = os.environ.get(\"VIGILIAE_DATA_DIR\", \"\
+      data\")\nteam = os.path.join(data_dir, \"team\")\nsrc_file = os.path.join(team, \"sources.json\")\nout = os.path.join(team,\
+      \ \"sator\", \"records.json\")\nos.makedirs(os.path.dirname(out), exist_ok=True)\nif not os.path.exists(src_file):\n\
+      \    print(\"sator: no sources.json; nothing to collect\")\n    sys.exit(0)\ndata = json.load(open(src_file, encoding=\"\
+      utf-8\"))\nsources = data.get(\"sources\") if isinstance(data, dict) else data\ntopic = data.get(\"topic\", \"unspecified\"\
+      ) if isinstance(data, dict) else \"unspecified\"\nresult = collect(topic, sources or [], seen_file=os.path.join(team,\
+      \ \"sator\", \"_SEEN_URLS.txt\"))\njson.dump(result, open(out, \"w\", encoding=\"utf-8\"), ensure_ascii=False, indent=2)\n\
+      print(\"sator: collected %d records, skipped_seen=%d, failed=%d\" % (\n    result[\"stats\"][\"records\"], result[\"\
+      stats\"][\"skipped_seen\"], result[\"stats\"][\"fetch_failed\"]))\n"
+- name: terminus
+  role: Anchor / 疆埸
+  description: Hash artifacts and append evidence anchors; never delete.
+  kind: python
+  schedule: every:900
+  timeout: 60
+  heavy: false
+  write_perm: true
+  need_approve: false
+  exec_pref: cloud
+  reports_to: annales
+  depends_on:
+  - annales
+  outputs:
+  - data/team/terminus/
+  payload:
+    code: "import hashlib, json, os, time\ndata_dir = os.environ.get(\"VIGILIAE_DATA_DIR\", \"data\")\nteam = os.path.join(data_dir,\
+      \ \"team\")\nout = os.path.join(team, \"terminus\", \"anchors.jsonl\")\nos.makedirs(os.path.dirname(out), exist_ok=True)\n\
+      rows = []\nfor name in (\"brief.md\", \"status.md\", \"verification.json\", \"graph.json\"):\n  p = os.path.join(team,\
+      \ name)\n  if os.path.exists(p):\n    h = hashlib.sha256(open(p, \"rb\").read()).hexdigest()\n    rows.append({\"file\"\
+      : name, \"sha256\": h, \"at\": time.strftime(\"%Y-%m-%d %H:%M:%S\")})\nwith open(out, \"a\", encoding=\"utf-8\") as\
+      \ f:\n  for r in rows:\n    f.write(json.dumps(r, ensure_ascii=False) + \"\\n\")\nprint(\"terminus: anchored\", len(rows))\n"
+  prompt: 'Contract: append-only SHA-256 anchors; never delete or rewrite a line.
+
+    SKILLS: verify（锚点来源）、memory（锚点历史）。只追加哈希，不删除。'
+  skills:
+  - verify
+  - memory

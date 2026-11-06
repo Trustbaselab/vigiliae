@@ -13,6 +13,22 @@ import traceback
 from .config import now
 from .db import db
 from .executor import run_task
+from .handover import local_online
+
+
+def should_run(exec_pref, online):
+    """Return True when this process should run a task with this exec_pref.
+
+    local  -> only when the laptop is online
+    cloud  -> only when the laptop is offline (cloud takeover)
+    either -> run in both states (the scheduler does not know which host it is)
+    """
+    pref = (exec_pref or "cloud").strip().lower()
+    if pref == "local":
+        return bool(online)
+    if pref == "cloud":
+        return not bool(online)
+    return True
 
 
 def parse_schedule(schedule):
@@ -80,10 +96,14 @@ class Scheduler(threading.Thread):
 
     def tick(self):
         with db() as conn:
-            rows = conn.execute("SELECT id, schedule FROM tasks WHERE enabled=1").fetchall()
+            rows = conn.execute(
+                "SELECT id, schedule, exec_pref FROM tasks WHERE enabled=1").fetchall()
         dt = now()
+        online, _ = local_online()
         for row in rows:
             task_id, schedule = row["id"], row["schedule"]
+            if not should_run(row["exec_pref"], online):
+                continue
             kind, value = parse_schedule(schedule)
             if not kind:
                 continue

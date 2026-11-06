@@ -27,3 +27,11 @@ venv/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# temp / accidental artifacts
+NONE
+README-NEW.md
+README-OLD-*.md
+.backup-*/
+*.bak
+*.bak_*

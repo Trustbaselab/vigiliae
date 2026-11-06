@@ -57,6 +57,10 @@ TZ = timezone(timedelta(hours=TZ_OFFSET))
 
 HOST = os.environ.get("VIGILIAE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VIGILIAE_PORT", "8110"))
+# Internal URL used by agent HTTP payloads (${VIGILIAE_BASE_URL}/...).
+# Localhost wins even when the service binds 0.0.0.0.
+BASE_URL = os.environ.get("VIGILIAE_BASE_URL") or "http://127.0.0.1:%d" % PORT
+os.environ.setdefault("VIGILIAE_BASE_URL", BASE_URL)
 
 # If the local agent has not sent a heartbeat for this long, the cloud takes over.
 HEARTBEAT_TIMEOUT = int(os.environ.get("VIGILIAE_HEARTBEAT_TIMEOUT", "120"))

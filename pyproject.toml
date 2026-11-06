@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vigiliae"
+version = "0.1.0"
+description = "A self-hosted AI agent runtime for trusted data governance — local↔cloud handoff, pricing-aware scheduling, declarative boundaries."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Trustbase Lab", email = "lab@trustbaselab.com" },
+]
+keywords = [
+    "ai-agents", "agent-runtime", "autonomous-agents", "mcp",
+    "model-context-protocol", "local-first", "self-hosted",
+    "data-governance", "pricing-aware-scheduling", "declarative-boundaries",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = [
+    "Flask>=3.0,<4",
+    "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "build>=1.0",
+    "twine>=5.0",
+]
+
+[project.urls]
+Homepage = "https://trustbaselab.com/demo.html"
+Repository = "https://github.com/Trustbaselab/vigiliae"
+Documentation = "https://github.com/Trustbaselab/vigiliae/tree/main/docs"
+Changelog = "https://github.com/Trustbaselab/vigiliae/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/Trustbaselab/vigiliae/issues"
+
+[project.scripts]
+vigiliae = "vigiliae.__main__:cli"
+vigiliae-init = "vigiliae.install:main"
+
+[tool.setuptools]
+packages = ["vigiliae"]
+
+[tool.setuptools.package-data]
+vigiliae = ["templates/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

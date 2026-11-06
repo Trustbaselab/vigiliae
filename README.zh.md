@@ -241,6 +241,34 @@ python -m vigiliae
 
 ---
 
+## 认证（重要）
+
+如果设置了 `BOT_TOKEN`，除 `/api/health`、`/api/heartbeat` 外的页面/API 都需要认证。
+浏览器第一次访问必须带 `?k=`；服务端返回 `302` 并种下 `cb_auth` cookie，之后正常访问 `/` 即可。
+
+```bash
+# 1) 从 .env 取 token
+TOKEN=$(grep '^BOT_TOKEN=' .env | cut -d= -f2-)
+
+# 2) 浏览器：第一次打开这个地址，之后用普通地址
+echo "http://<服务器IP>:8110/login?k=$TOKEN"
+
+# 3) curl：跟随 302 并保存 cookie
+curl -c /tmp/vig.cookie -L "http://127.0.0.1:8110/login?k=$TOKEN"
+curl -b /tmp/vig.cookie "http://127.0.0.1:8110/api/tasks"
+
+# 4) 或者一步带 ?k=（API 直接 200；-L 兼容未来重定向）
+curl -L "http://127.0.0.1:8110/api/tasks?k=$TOKEN"
+```
+
+- 浏览器：先开 `http://<服务器IP>:8110/login?k=<TOKEN>`，再开 `http://<服务器IP>:8110/`。
+- `?k=` 用在 **API** 请求上会直接返回 200 + `Set-Cookie`（不跳转）；`-L` 可保留，兼容后续变化。
+- `?k=` 只负责第一次种 cookie；后续 API 可用 `-b` 带 cookie。
+- `BOT_TOKEN` 为空 = 开放调试模式，**不要**直接暴露公网。
+- 第一次登录时 token 在 URL 里；生产环境用 HTTPS，并注意日志脱敏。
+
+---
+
 ## 写第一个 Agent
 
 Agent = prompt + 排期 + 边界。参考

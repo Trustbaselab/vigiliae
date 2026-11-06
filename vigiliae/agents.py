@@ -35,22 +35,38 @@ def sync(path=None):
             if not name:
                 continue
             task_id = "agent_" + name
-            payload = {"prompt": agent.get("prompt") or ""}
+            kind = (agent.get("kind") or "agent").strip()
+            if kind == "agent":
+                payload = {"prompt": agent.get("prompt") or ""}
+            else:
+                payload = agent.get("payload") or {}
+            payload["_team"] = {
+                "reports_to": agent.get("reports_to") or "",
+                "depends_on": agent.get("depends_on") or [],
+                "outputs": agent.get("outputs") or [],
+                "skills": agent.get("skills") or [],
+            }
             conn.execute(
                 """INSERT INTO tasks
                    (id,name,desc,kind,payload,schedule,enabled,write_perm,need_approve,
                     heavy,exec_pref,timeout,retries,created_at,updated_at,run_count,fail_count)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0)
                    ON CONFLICT(id) DO UPDATE SET
-                     name=excluded.name, desc=excluded.desc, payload=excluded.payload,
-                     schedule=excluded.schedule, heavy=excluded.heavy,
-                     timeout=excluded.timeout, updated_at=excluded.updated_at""",
+                     name=excluded.name, desc=excluded.desc, kind=excluded.kind,
+                     payload=excluded.payload, schedule=excluded.schedule,
+                     enabled=excluded.enabled, write_perm=excluded.write_perm,
+                     need_approve=excluded.need_approve, heavy=excluded.heavy,
+                     exec_pref=excluded.exec_pref, timeout=excluded.timeout,
+                     updated_at=excluded.updated_at""",
                 (task_id, agent.get("role") or name, agent.get("description") or "",
-                 "agent", _dumps(payload), agent.get("schedule") or "",
+                 kind, _dumps(payload), agent.get("schedule") or "",
                  1 if agent.get("enabled", True) else 0,
-                 0, 0,
+                 1 if agent.get("write_perm") else 0,
+                 1 if agent.get("need_approve") else 0,
                  1 if agent.get("heavy", True) else 0,
-                 "cloud", int(agent.get("timeout") or 1800), 2,
+                 agent.get("exec_pref") or "cloud",
+                 int(agent.get("timeout") or 1800),
+                 int(agent.get("retries") or 2),
                  now_str(), now_str()))
             created += 1
     return created, team

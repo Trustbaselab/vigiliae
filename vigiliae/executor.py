@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import traceback
 import urllib.request
 
@@ -52,9 +53,12 @@ def exec_shell(payload, timeout=300):
 
 
 def exec_http(payload, timeout=60):
-    url = payload.get("url") or ""
+    url = os.path.expandvars(payload.get("url") or "")
     method = (payload.get("method") or "GET").upper()
-    headers = payload.get("headers") or {}
+    headers = {
+        str(k): os.path.expandvars(str(v))
+        for k, v in (payload.get("headers") or {}).items()
+    }
     body = payload.get("body")
     if isinstance(body, (dict, list)):
         body = json.dumps(body).encode()
@@ -80,7 +84,7 @@ def exec_python(payload, timeout=300):
     if not code:
         return 1, "", "payload is missing `code`"
     try:
-        proc = subprocess.run(["python3", "-c", code], capture_output=True, text=True,
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                               timeout=timeout, cwd=payload.get("cwd") or config.DSH_CWD)
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired:
@@ -124,8 +128,44 @@ def _report_task_bus(task, status, detail):
         pass
 
 
-def run_task(task_id, trigger="scheduled"):
-    """Execute one task and return a small result dict."""
+def _save_report(task, status, out, err):
+    """Persist one agent run to data/team/<agent>/latest.json.
+
+    This is deliberately outside the executor business logic: it only writes a
+    report copy after the run, and it never changes stdout/stderr semantics.
+    """
+    task_id = task.get("id") or ""
+    if not task_id.startswith("agent_"):
+        return None
+    agent_name = task_id[len("agent_"):]
+    if not agent_name:
+        return None
+    team_dir = os.path.join(config.DATA_DIR, "team", agent_name)
+    try:
+        os.makedirs(team_dir, exist_ok=True)
+        record = {
+            "task_id": task_id,
+            "agent": agent_name,
+            "role": task.get("name") or "",
+            "status": status,
+            "at": now_str(),
+            "output": (out or "")[:20000],
+            "error": (err or "")[:4000],
+        }
+        path = os.path.join(team_dir, "latest.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(record, fh, ensure_ascii=False, indent=2)
+        return path
+    except OSError:
+        return None
+
+
+def run_task(task_id, trigger="scheduled", approved=False):
+    """Execute one task and return a small result dict.
+
+    `approved=True` is used only by the approval-resume path: it bypasses the
+    approval gate once, so an approved task can actually execute.
+    """
     with db() as conn:
         row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
     if not row:
@@ -146,8 +186,8 @@ def run_task(task_id, trigger="scheduled"):
         return {"run_id": run_id, "status": "deferred", "reason": "peak_hour",
                 "retry_after": next_offpeak().strftime("%H:%M")}
 
-    # Manual approval gate.
-    if task["need_approve"]:
+    # Manual approval gate. An already-approved run passes approved=True.
+    if task["need_approve"] and not approved:
         with db() as conn:
             conn.execute(
                 "INSERT INTO approvals (task_id, requested_at, status) VALUES (?,?,?)",
@@ -168,13 +208,30 @@ def run_task(task_id, trigger="scheduled"):
     if not fn:
         code, out, err = 1, "", "unknown executor: %s" % task["kind"]
     else:
-        try:
-            code, out, err = fn(payload, timeout=task["timeout"] or 300)
-        except Exception:  # noqa: BLE001
-            code, out, err = 1, "", traceback.format_exc()[:4000]
+        # Read-only gate: block writes BEFORE calling the executor, not after.
+        if not task["write_perm"]:
+            if task["kind"] == "shell":
+                hits = check_dangerous(payload.get("cmd") or "")
+                if hits:
+                    code, out, err = 3, "", "read-only task blocked: " + ", ".join(hits)
+                    fn = None
+            elif task["kind"] == "http":
+                method = (payload.get("method") or "GET").upper()
+                if method not in ("GET", "HEAD"):
+                    code, out, err = 3, "", "read-only HTTP task blocked: %s" % method
+                    fn = None
+            elif task["kind"] == "python":
+                code, out, err = 3, "", "read-only python tasks are not allowed; use a narrow HTTP endpoint"
+                fn = None
+        if fn:
+            try:
+                code, out, err = fn(payload, timeout=task["timeout"] or 300)
+            except Exception:  # noqa: BLE001
+                code, out, err = 1, "", traceback.format_exc()[:4000]
 
-    # Read-only tasks may not run dangerous shell commands.
-    if not task["write_perm"] and task["kind"] == "shell":
+    # Read-only shell safety is checked above; this branch remains for callers
+    # that pass a shell task through a custom executor.
+    if not task["write_perm"] and task["kind"] == "shell" and code == 0:
         hits = check_dangerous(payload.get("cmd") or "")
         if hits:
             code, err = 3, "read-only task blocked: " + ", ".join(hits)
@@ -182,6 +239,7 @@ def run_task(task_id, trigger="scheduled"):
     finished = now()
     duration_ms = int((finished - started).total_seconds() * 1000)
     status = "ok" if code == 0 else "failed"
+    report_path = _save_report(task, status, out, err)
 
     with db() as conn:
         conn.execute(
@@ -210,4 +268,4 @@ def run_task(task_id, trigger="scheduled"):
 
     return {"run_id": run_id, "status": status, "exit_code": code,
             "duration_ms": duration_ms, "stdout": (out or "")[:500],
-            "stderr": (err or "")[:500]}
+            "stderr": (err or "")[:500], "report": report_path}
