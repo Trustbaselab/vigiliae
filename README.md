@@ -148,6 +148,8 @@ Deterministic work goes to the rule engine; only reasoning goes to the LLM. **Ch
 
 Not tied to any model. DSH, or any CLI that can output text. You can run it with no LLM at all and only use the rule engine.
 
+**⭐ [How to plug in any model: docs/models.md](docs/models.md)** — Ollama (local), Claude, GPT-4o, DeepSeek, Kimi, GLM, Qwen, llama.cpp. One wrapper script each.
+
 ---
 
 ## Comparison
