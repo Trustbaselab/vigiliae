@@ -63,6 +63,27 @@ button.pri{background:var(--ac);color:#0A0A0F;border-color:var(--ac);font-weight
 .hint b{color:var(--tx)}
 .hint code{background:rgba(255,255,255,.07);padding:2px 7px;border-radius:4px;font-family:monospace;font-size:16px;color:#22D3EE}
 
+/* 模型切换 */
+.hd .now{font-size:14.5px;color:var(--ac);margin-top:4px;font-weight:600;line-height:1.4;word-break:break-word}
+.hd .now .nowSub{color:var(--tx3);font-weight:400}
+.modelHint{background:rgba(96,165,250,.08);border-left:3px solid var(--bl);border-radius:0 10px 10px 0;padding:14px 16px;font-size:16px;color:var(--tx2);margin-bottom:14px;line-height:1.65}
+.modelHint b{color:var(--tx)}
+.modelMeta{font-size:15px;color:var(--tx3);margin-top:6px;line-height:1.55}
+.modelTags{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.modelTag{display:inline-block;font-size:13.5px;padding:3px 9px;border-radius:5px;background:var(--sf2);color:var(--tx3)}
+.modelTag.local{background:rgba(16,185,129,.15);color:var(--ok)}
+.modelTag.cloud{background:rgba(96,165,250,.15);color:var(--bl)}
+select{width:100%;background:var(--sf2);border:1px solid var(--bd);color:var(--tx);padding:13px 14px;border-radius:10px;font-size:17px;font-family:inherit;margin-top:6px;line-height:1.5}
+select:focus{outline:none;border-color:var(--ac)}
+select:disabled{opacity:.5;cursor:not-allowed}
+select option{background:var(--sf2);color:var(--tx)}
+.modelActions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.modelActions button{flex:1;min-width:120px}
+.modelMsg{font-size:15px;color:var(--tx3);margin-top:10px;line-height:1.6;min-height:24px}
+.modelMsg.ok{color:var(--ok)}
+.modelMsg.err{color:var(--dg)}
+.modelMsg.wn{color:var(--wn)}
+
 /* prevent horizontal overflow on narrow screens */
 html,body{width:100%;max-width:100vw;overflow-x:hidden !important}
 body *{max-width:100vw;box-sizing:border-box}
@@ -78,12 +99,14 @@ body *{max-width:100vw;box-sizing:border-box}
 <div class="hd">
   <h1><span class="dot" id="dot"></span> Vigiliae</h1>
   <div class="st" id="st">连接中…</div>
+  <div class="now" id="modelNow">当前模型：加载中…</div>
 </div>
 
 <div class="tabs">
   <div class="tab on" data-p="msg">留言<span class="bdg" id="bdg" style="display:none">0</span></div>
   <div class="tab" data-p="task">任务</div>
   <div class="tab" data-p="run">历史</div>
+  <div class="tab" data-p="model">模型</div>
 </div>
 
 <div class="pane on" id="p-msg">
@@ -105,6 +128,27 @@ body *{max-width:100vw;box-sizing:border-box}
   <div id="runs"></div>
 </div>
 
+<div class="pane" id="p-model">
+  <div class="sec">模型切换</div>
+  <div class="modelHint">
+    <b>切换模型不影响 Agent 逻辑。</b>选本地模型时，数据完全不出你的机器。<br>
+    本地模型标注 <span class="modelTag local">数据 0 出网</span>；切换会重启服务，约 8 秒生效。
+  </div>
+  <div class="box">
+    <div class="lb">当前模型</div>
+    <div class="vv ac" id="modelName">加载中…</div>
+    <div class="modelMeta" id="modelMeta"></div>
+    <div class="modelTags" id="modelTags"></div>
+    <div class="lb" style="margin-top:16px">选择模型</div>
+    <select id="modelSel" aria-label="选择模型"></select>
+    <div class="modelActions">
+      <button class="pri" id="modelBtn" onclick="switchModel()">切换模型</button>
+      <button id="modelRefresh" onclick="loadModels()">刷新</button>
+    </div>
+    <div class="modelMsg" id="modelMsg"></div>
+  </div>
+</div>
+
 <div class="composer" id="composer">
   <textarea id="inp" rows="1" placeholder="Message your team…"></textarea>
   <button class="pri" id="send">发送</button>
@@ -113,7 +157,12 @@ body *{max-width:100vw;box-sizing:border-box}
 <script>
 // If you mount Vigiliae under a sub-path (e.g. https://host/bot/), set API="/bot".
 // When served at the root, leave it empty.
-var API = "";
+var API = (function(){
+  // 自动探测挂载前缀：/vigiliae-demo/ -> /vigiliae-demo ；/ -> ''
+  var p = location.pathname.replace(/\/+$/, '');
+  if (/\.[a-z0-9]+$/i.test(p)) p = p.replace(/\/[^\/]+$/, '');
+  return p;
+})();
 var lastId = 0;
 var curPane = 'msg';
 var sending = false;
@@ -128,6 +177,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     document.getElementById('composer').style.display = (curPane==='msg') ? 'flex' : 'none';
     if(curPane==='task') loadTasks();
     if(curPane==='run') loadRuns();
+    if(curPane==='model') loadModels();
   };
 });
 
@@ -259,8 +309,130 @@ document.getElementById('inp').addEventListener('input', function(){
   this.style.height = Math.min(this.scrollHeight, 140) + 'px';
 });
 
-function loadTasks(){
-  fetch(API+"/api/tasks").then(function(r){return r.json()}).then(function(d){
+var modelData = null;
+var modelBusy = false;
+
+function modelDisplay(m){
+  if(!m) return '未知';
+  return m.label + (m.kind === 'local' ? ' · 本地 · 数据 0 出网' : ' · 云端');
+}
+
+function setModelMsg(text, cls){
+  var el = document.getElementById('modelMsg');
+  el.textContent = text || '';
+  el.className = 'modelMsg' + (cls ? ' ' + cls : '');
+}
+
+function loadModels(){
+  var sel = document.getElementById('modelSel');
+  var btn = document.getElementById('modelBtn');
+  fetch(API+"/api/models").then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(d){
+    if(!d || d.ok === false) throw new Error((d && d.error) || '加载失败');
+    modelData = d;
+    var models = d.models || [];
+    var cur = models.filter(function(m){return m.active;})[0];
+    document.getElementById('modelNow').textContent =
+      '当前模型：' + (cur ? modelDisplay(cur) : (d.current || '未知'));
+    document.getElementById('modelName').textContent = cur ? cur.label : (d.current || '未知');
+    document.getElementById('modelMeta').textContent = cur ? (cur.note || '') : '';
+
+    var tags = document.getElementById('modelTags');
+    tags.innerHTML = '';
+    if(cur){
+      var kind = document.createElement('span');
+      kind.className = 'modelTag ' + (cur.kind === 'local' ? 'local' : 'cloud');
+      kind.textContent = cur.kind === 'local' ? '数据 0 出网' : '云端';
+      tags.appendChild(kind);
+      var avail = document.createElement('span');
+      avail.className = 'modelTag';
+      avail.textContent = cur.available === false ? '当前不可用' : '可用';
+      tags.appendChild(avail);
+    }
+
+    sel.innerHTML = '';
+    models.forEach(function(m){
+      var opt = document.createElement('option');
+      opt.value = m.id;
+      opt.disabled = !m.available;
+      opt.selected = !!m.active;
+      opt.textContent = m.label + ' · ' +
+        (m.kind === 'local' ? '本地 · 数据 0 出网' : '云端') +
+        (!m.available ? '（不可用）' : '');
+      sel.appendChild(opt);
+    });
+    if(!models.length){
+      var opt = document.createElement('option');
+      opt.textContent = '没有可用模型';
+      sel.appendChild(opt);
+    }
+    btn.disabled = modelBusy;
+    if(sel.selectedIndex < 0 && models.length) sel.selectedIndex = 0;
+  }).catch(function(e){
+    document.getElementById('modelNow').textContent = '当前模型：加载失败';
+    setModelMsg('模型列表加载失败：' + e.message, 'err');
+  });
+}
+
+function switchModel(){
+  if(modelBusy) return;
+  var sel = document.getElementById('modelSel');
+  var mid = sel.value;
+  if(!mid){ setModelMsg('请选择模型', 'err'); return; }
+  var cur = ((modelData && modelData.models) || []).filter(function(m){return m.active;})[0];
+  if(cur && cur.id === mid){ setModelMsg('已经是当前模型，无需切换。', 'wn'); return; }
+
+  var tk = '';
+  try { tk = sessionStorage.getItem('tier2_token') || ''; } catch(e) {}
+  if(!tk){
+    tk = window.prompt('请输入访问令牌（只需一次，仅保存在本标签页）');
+    tk = (tk || '').trim();
+    if(!tk) return;
+    try { sessionStorage.setItem('tier2_token', tk); } catch(e) {}
+  }
+
+  modelBusy = true;
+  var btn = document.getElementById('modelBtn');
+  btn.disabled = true;
+  btn.textContent = '切换中…';
+  setModelMsg('切换中，服务会重启，约 8 秒…', 'wn');
+
+  fetch(API+"/api/models/switch?k=" + encodeURIComponent(tk), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({model: mid})
+  }).then(function(r){
+    if(r.status === 502) throw {restart:true, status:502};
+    return r.json().then(function(d){
+      if(!d.ok) throw {status:r.status, msg:d.error || '切换失败'};
+      return d;
+    }, function(){
+      throw {restart:true, status:r.status};
+    });
+  }).then(function(d){
+    setModelMsg('已切换到 ' + (d.model || mid) + '，服务重启中，约 8 秒后自动刷新…', 'ok');
+    setTimeout(function(){ location.reload(); }, 10000);
+  }).catch(function(e){
+    if(e && (e.restart || e.name === 'TypeError' || e.status === 502)){
+      setModelMsg('服务重启中，约 8 秒后自动刷新…', 'wn');
+      setTimeout(function(){ location.reload(); }, 10000);
+      return;
+    }
+    if(e && e.status === 401){
+      try { sessionStorage.removeItem('tier2_token'); } catch(_) {}
+      setModelMsg('令牌不正确，请重试。', 'err');
+    } else {
+      setModelMsg('切换失败：' + ((e && e.msg) || (e && e.message) || e), 'err');
+    }
+    modelBusy = false;
+    btn.disabled = false;
+    btn.textContent = '切换模型';
+  });
+}
+
+function loadTasks(){  fetch(API+"/api/tasks").then(function(r){return r.json()}).then(function(d){
     var h = '';
     (d.tasks||[]).forEach(function(t){
       h += '<div class="item">'+
@@ -334,7 +506,7 @@ function loadUnread(){
   }).catch(function(){});
 }
 
-loadStatus(); loadMsgs(true); loadUnread();
+loadStatus(); loadMsgs(true); loadUnread(); loadModels();
 setInterval(loadStatus, 15000);
 setInterval(function(){ if(curPane==='msg') loadMsgs(false); }, 4000);
 setInterval(loadUnread, 20000);
